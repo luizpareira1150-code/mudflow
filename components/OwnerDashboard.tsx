@@ -1,57 +1,12 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { 
-  TrendingUp, Users, Calendar, Activity, AlertTriangle, 
-  CheckCircle, Zap, BarChart3, Download, Filter, 
-  Building2, ChevronDown, Search, Bell, RefreshCw,
-  Award, Target, Phone, MessageSquare, DollarSign,
-  ArrowUp, ArrowDown, Minus, ExternalLink, Eye
+  TrendingUp, Users, Calendar, AlertTriangle, 
+  CheckCircle, Zap, Building2, Filter, 
+  Bell, RefreshCw, Award, Target, DollarSign,
+  ArrowUp, ArrowDown, Minus
 } from 'lucide-react';
-import { dataService } from '../services/mockSupabase';
-import { Organization, User, Appointment, AppointmentStatus, Doctor } from '../types';
-
-interface ClientHealthMetrics {
-  clientId: string;
-  clientName: string;
-  accountType: 'CONSULTORIO' | 'CLINICA';
-  lastUsed: string; // ISO date
-  appointmentsThisMonth: number;
-  appointmentsThisWeek: number;
-  automationsActive: boolean;
-  webhookStatus: 'healthy' | 'warning' | 'critical';
-  healthScore: 'healthy' | 'attention' | 'risk'; // 🟢🟡🔴
-  
-  // Métricas semanais
-  weeklyContacts: number;
-  weeklyScheduled: number;
-  weeklyAttended: number;
-  weeklyCancelled: number;
-  
-  // Métricas mensais
-  monthlyContacts: number;
-  monthlyScheduled: number;
-  monthlyAttended: number;
-  monthlyCancelled: number;
-  
-  // Comparação
-  growthVsLastMonth: number; // percentual
-  
-  // Tráfego pago (para análise de upsell)
-  avgAppointmentsPerDay: number;
-  availableSlots: number;
-  occupancyRate: number; // %
-  noShowRate: number; // %
-  needsTrafficAnalysis: boolean;
-}
-
-interface GlobalMetrics {
-  totalClients: number;
-  activeClients: number;
-  totalAppointmentsThisMonth: number;
-  totalAutomationsSent: number;
-  automationSuccessRate: number;
-  mrr: number; // Monthly Recurring Revenue (se aplicável)
-  growthRate: number; // % vs mês anterior
-}
+import { analyticsService } from '../services/mockSupabase';
+import { User, ClientHealthMetrics, GlobalMetrics } from '../types';
 
 interface OwnerDashboardProps {
   currentUser: User;
@@ -78,87 +33,10 @@ const OwnerDashboard: React.FC<OwnerDashboardProps> = ({ currentUser }) => {
     setLoading(true);
     
     try {
-      // 1. Buscar todas organizações
-      const orgs = await dataService.getOrganizations();
-      const activeOrgs = orgs.filter(o => o.id !== 'global');
-      
-      // 2. Para cada organização, calcular métricas
-      const metricsPromises = activeOrgs.map(async (org) => {
-        // Buscar appointments dos últimos 30 dias
-        const today = new Date();
-        const thirtyDaysAgo = new Date(today);
-        thirtyDaysAgo.setDate(today.getDate() - 30);
-        
-        // Simulação de dados para o dashboard
-        const monthlyScheduled = Math.floor(Math.random() * 250) + 50;
-        const monthlyAttended = Math.floor(monthlyScheduled * (0.85 + Math.random() * 0.1));
-        const monthlyCancelled = monthlyScheduled - monthlyAttended;
-        
-        const weeklyScheduled = Math.floor(monthlyScheduled / 4);
-        const weeklyAttended = Math.floor(weeklyScheduled * 0.9);
-        
-        const lastUsedDays = Math.floor(Math.random() * 40);
-        const lastUsed = new Date(today);
-        lastUsed.setDate(today.getDate() - lastUsedDays);
-        
-        // Calcular health score
-        let healthScore: 'healthy' | 'attention' | 'risk' = 'healthy';
-        if (lastUsedDays > 15 || monthlyScheduled < 30) healthScore = 'risk';
-        else if (lastUsedDays > 7 || monthlyScheduled < 50) healthScore = 'attention';
-        
-        // Análise de necessidade de tráfego pago
-        const occupancyRate = (monthlyScheduled / (30 * 8)) * 100; // Assumindo 8 slots/dia
-        const needsTrafficAnalysis = occupancyRate < 60 || monthlyScheduled < 100;
-        
-        return {
-          clientId: org.id,
-          clientName: org.name,
-          accountType: org.accountType,
-          lastUsed: lastUsed.toISOString(),
-          appointmentsThisMonth: monthlyScheduled,
-          appointmentsThisWeek: weeklyScheduled,
-          automationsActive: Math.random() > 0.2,
-          webhookStatus: Math.random() > 0.1 ? 'healthy' : 'warning',
-          healthScore,
-          
-          weeklyContacts: Math.floor(weeklyScheduled * 1.2),
-          weeklyScheduled,
-          weeklyAttended,
-          weeklyCancelled: weeklyScheduled - weeklyAttended,
-          
-          monthlyContacts: Math.floor(monthlyScheduled * 1.15),
-          monthlyScheduled,
-          monthlyAttended,
-          monthlyCancelled,
-          
-          growthVsLastMonth: Math.floor((Math.random() - 0.3) * 50),
-          
-          avgAppointmentsPerDay: monthlyScheduled / 30,
-          availableSlots: 240, // 30 dias * 8 slots
-          occupancyRate,
-          noShowRate: (monthlyCancelled / monthlyScheduled) * 100,
-          needsTrafficAnalysis
-        } as ClientHealthMetrics;
-      });
-      
-      const metrics = await Promise.all(metricsPromises);
-      setClientsMetrics(metrics);
-      
-      // 3. Calcular métricas globais
-      const globalMetrics: GlobalMetrics = {
-        totalClients: activeOrgs.length,
-        activeClients: metrics.filter(m => m.healthScore !== 'risk').length,
-        totalAppointmentsThisMonth: metrics.reduce((sum, m) => sum + m.monthlyScheduled, 0),
-        totalAutomationsSent: Math.floor(metrics.reduce((sum, m) => sum + m.monthlyScheduled, 0) * 3.5),
-        automationSuccessRate: 97.8,
-        mrr: activeOrgs.length * 150, // Exemplo: R$ 150/cliente
-        growthRate: 18.5
-      };
-      
-      setGlobalMetrics(globalMetrics);
-      
-      // 4. Gerar notificações
-      generateNotifications(metrics);
+      const { global, clients } = await analyticsService.getOwnerDashboardMetrics();
+      setGlobalMetrics(global);
+      setClientsMetrics(clients);
+      generateNotifications(clients);
       
     } catch (error) {
       console.error('Erro ao calcular métricas:', error);
@@ -170,7 +48,6 @@ const OwnerDashboard: React.FC<OwnerDashboardProps> = ({ currentUser }) => {
   const generateNotifications = (metrics: ClientHealthMetrics[]) => {
     const notifs = [];
     
-    // Clientes em risco
     const riskClients = metrics.filter(m => m.healthScore === 'risk');
     if (riskClients.length > 0) {
       notifs.push({
@@ -181,7 +58,6 @@ const OwnerDashboard: React.FC<OwnerDashboardProps> = ({ currentUser }) => {
       });
     }
     
-    // Webhooks com problemas
     const webhookIssues = metrics.filter(m => m.webhookStatus === 'warning');
     if (webhookIssues.length > 0) {
       notifs.push({
@@ -200,8 +76,6 @@ const OwnerDashboard: React.FC<OwnerDashboardProps> = ({ currentUser }) => {
     const interval = setInterval(calculateMetrics, 5 * 60 * 1000);
     return () => clearInterval(interval);
   }, []);
-
-  // --- MEMOS ---
 
   const formatRelativeDate = (isoDate: string): string => {
     const date = new Date(isoDate);
@@ -301,7 +175,6 @@ const OwnerDashboard: React.FC<OwnerDashboardProps> = ({ currentUser }) => {
             <span className="text-sm font-medium text-gray-700">Filtros:</span>
             </div>
             
-            {/* Filtro de Período */}
             <select
             value={filterPeriod}
             onChange={(e) => setFilterPeriod(e.target.value as any)}
@@ -312,7 +185,6 @@ const OwnerDashboard: React.FC<OwnerDashboardProps> = ({ currentUser }) => {
             <option value="custom">Período customizado</option>
             </select>
             
-            {/* Filtro de Tipo de Conta */}
             <select
             value={filterAccountType}
             onChange={(e) => setFilterAccountType(e.target.value as any)}
@@ -323,7 +195,6 @@ const OwnerDashboard: React.FC<OwnerDashboardProps> = ({ currentUser }) => {
             <option value="CLINICA">Só Clínicas</option>
             </select>
             
-            {/* Filtro de Status */}
             <select
             value={filterHealthStatus}
             onChange={(e) => setFilterHealthStatus(e.target.value as any)}

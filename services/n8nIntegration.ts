@@ -1,5 +1,4 @@
 
-
 import { ClinicSettings, AppointmentStatus } from '../types';
 
 // Gera token único para cada clínica
@@ -251,12 +250,18 @@ export class N8NIntegrationService {
     
     console.log(`📝 Criando agendamento para ${patientName} em ${date} às ${time}`);
     
+    // 1. Get or Create Patient (NEW LOGIC)
+    const patient = await dataService.getOrCreatePatient({
+      name: patientName,
+      phone: patientPhone,
+      organizationId: payload.clinicId
+    });
+
+    // 2. Create Appointment
     const appt = await dataService.createAppointment({
       clinicId: payload.clinicId,
       doctorId: doctorId,
-      patientId: `ext_${Date.now()}`,
-      patientName,
-      patientPhone,
+      patientId: patient.id, // Updated: use relational ID
       date,
       time,
       procedure: procedure || 'Agendamento Externo',
@@ -267,7 +272,7 @@ export class N8NIntegrationService {
     return {
       success: true,
       message: 'Agendamento criado com sucesso',
-      data: { appointmentId: appt.id }
+      data: { appointmentId: appt.id, patientId: patient.id }
     };
   }
   
@@ -297,7 +302,6 @@ export class N8NIntegrationService {
     
     console.log(`🔒 Bloqueando agenda em ${date} de ${startHour} até ${endHour}`);
     
-    // Generating blocks logic (simplified)
     const slotsToBlock: string[] = [];
     const [startH, startM] = startHour.split(':').map(Number);
     const [endH, endM] = endHour.split(':').map(Number);
@@ -315,9 +319,7 @@ export class N8NIntegrationService {
     const newBlockAppointments = slotsToBlock.map((time: string) => ({
       clinicId: payload.clinicId,
       doctorId: doctors[0].id,
-      patientId: 'system_block_n8n',
-      patientName: 'AGENDA FECHADA (N8N)',
-      patientPhone: '',
+      patientId: 'system_block_n8n', // Dummy ID for blocks
       date: date,
       time: time,
       status: AppointmentStatus.BLOQUEADO,
@@ -342,16 +344,20 @@ export class N8NIntegrationService {
     
     console.log(`👤 Criando contato de ${patientName} via ${source || 'desconhecido'}`);
     
-    // Creating as "Em Contato"
     const doctors = await dataService.getDoctors(payload.clinicId);
     if(doctors.length === 0) return { success: false, message: 'Clínica sem médicos.' };
+
+    // Get or Create Patient
+    const patient = await dataService.getOrCreatePatient({
+        name: patientName,
+        phone: patientPhone,
+        organizationId: payload.clinicId
+    });
 
     await dataService.createAppointment({
       clinicId: payload.clinicId,
       doctorId: doctors[0].id,
-      patientId: `lead_${Date.now()}`,
-      patientName: patientName,
-      patientPhone: patientPhone,
+      patientId: patient.id,
       date: new Date().toISOString().split('T')[0], // Today
       time: '00:00', // Placeholder
       status: AppointmentStatus.EM_CONTATO,
@@ -362,7 +368,7 @@ export class N8NIntegrationService {
     return {
       success: true,
       message: 'Contato adicionado ao CRM',
-      data: { contactId: `contact_${Date.now()}` }
+      data: { patientId: patient.id }
     };
   }
 }

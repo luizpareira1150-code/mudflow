@@ -1,3 +1,4 @@
+
 import React, { useEffect, useState } from 'react';
 import { Appointment, AppointmentStatus, User, Column, Doctor } from '../types';
 import { dataService } from '../services/mockSupabase';
@@ -104,9 +105,9 @@ export const CRM: React.FC<CRMProps> = ({ user, doctors, selectedDoctorId, onDoc
 
         // Log N8N simulation
         if (targetStatus === AppointmentStatus.ATENDIDO) {
-            console.log(`[N8N] Triggering Review Request for ${appt.patientName}`);
+            console.log(`[N8N] Triggering Review Request for ${appt.patient?.name}`);
         } else if (targetStatus === AppointmentStatus.NAO_VEIO) {
-            console.log(`[N8N] Triggering Recovery Flow for ${appt.patientName}`);
+            console.log(`[N8N] Triggering Recovery Flow for ${appt.patient?.name}`);
         }
       }
     } catch (error) {
@@ -258,11 +259,13 @@ export const CRM: React.FC<CRMProps> = ({ user, doctors, selectedDoctorId, onDoc
                                 </div>
                                 <div className="flex items-center gap-2 mb-1">
                                     <UserIcon size={14} className="text-gray-400" />
-                                    <p className="font-medium text-gray-900 text-sm truncate">{appt.patientName}</p>
+                                    {/* UPDATED: Patient Name Access */}
+                                    <p className="font-medium text-gray-900 text-sm truncate">{appt.patient?.name || 'Paciente'}</p>
                                 </div>
                                 <div className="flex items-center gap-2">
                                     <Phone size={14} className="text-gray-400" />
-                                    <p className="text-xs text-gray-500">{appt.patientPhone}</p>
+                                    {/* UPDATED: Patient Phone Access */}
+                                    <p className="text-xs text-gray-500">{appt.patient?.phone}</p>
                                 </div>
                                 {appt.notes && (
                                     <div className="mt-2 pt-2 border-t border-gray-50 text-[11px] text-gray-400 italic truncate">
@@ -300,14 +303,16 @@ export const CRM: React.FC<CRMProps> = ({ user, doctors, selectedDoctorId, onDoc
                         <div className="bg-blue-50 p-2 rounded-lg text-blue-600 mt-1"><UserIcon size={20} /></div>
                         <div>
                             <h4 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Paciente</h4>
-                            <p className="text-lg font-semibold text-gray-900">{selectedAppointment.patientName}</p>
+                            {/* UPDATED */}
+                            <p className="text-lg font-semibold text-gray-900">{selectedAppointment.patient?.name || 'Não encontrado'}</p>
                         </div>
                     </div>
                     <div className="flex items-start gap-4">
                         <div className="bg-green-50 p-2 rounded-lg text-green-600 mt-1"><Phone size={20} /></div>
                         <div>
                             <h4 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Contato</h4>
-                            <p className="text-base text-gray-700 font-medium">{selectedAppointment.patientPhone}</p>
+                            {/* UPDATED */}
+                            <p className="text-base text-gray-700 font-medium">{selectedAppointment.patient?.phone}</p>
                         </div>
                     </div>
 

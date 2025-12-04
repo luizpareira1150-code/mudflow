@@ -199,8 +199,6 @@ export const Agenda: React.FC<AgendaProps> = ({
       clinicId: user.clinicId,
       doctorId: selectedDoctorId,
       patientId: 'system_block',
-      patientName: 'AGENDA FECHADA',
-      patientPhone: '',
       date: blockData.date,
       time: time,
       status: AppointmentStatus.BLOQUEADO,
@@ -401,7 +399,8 @@ export const Agenda: React.FC<AgendaProps> = ({
 
                   {appt ? (
                     <div>
-                      <p className="font-semibold text-gray-800 truncate">{appt.patientName}</p>
+                      {/* UPDATED: Patient Name Access */}
+                      <p className="font-semibold text-gray-800 truncate">{appt.patient?.name || 'Paciente'}</p>
                       <div className="flex flex-col gap-1 mt-1">
                         <p className="text-xs text-gray-500 flex items-center gap-1">
                             <Clock size={12} /> {appt.status}
@@ -465,18 +464,22 @@ export const Agenda: React.FC<AgendaProps> = ({
                         </div>
                         <div>
                             <h4 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Paciente</h4>
-                            <p className="text-lg font-semibold text-gray-900">{selectedAppointment.patientName}</p>
+                            <p className="text-lg font-semibold text-gray-900">
+                                {selectedAppointment.status === AppointmentStatus.BLOQUEADO 
+                                    ? 'Bloqueio de Agenda' 
+                                    : (selectedAppointment.patient?.name || 'Paciente não encontrado')}
+                            </p>
                         </div>
                     </div>
 
-                    {selectedAppointment.patientPhone && (
+                    {selectedAppointment.patient?.phone && (
                         <div className="flex items-start gap-4">
                             <div className="bg-green-50 p-2 rounded-lg text-green-600 mt-1">
                                 <Phone size={20} />
                             </div>
                             <div>
                                 <h4 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Contato</h4>
-                                <p className="text-base text-gray-700 font-medium">{selectedAppointment.patientPhone}</p>
+                                <p className="text-base text-gray-700 font-medium">{selectedAppointment.patient.phone}</p>
                             </div>
                         </div>
                     )}

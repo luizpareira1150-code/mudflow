@@ -15,7 +15,7 @@ export const generateSmartSummary = async (patient: Patient): Promise<string> =>
       Patient Name: ${patient.name}
       Condition: ${patient.condition}
       Status: ${patient.status}
-      Age: ${patient.age}
+      Birth Date: ${patient.birthDate || 'N/A'}
       Next Step: ${patient.nextStep}
     `;
 
