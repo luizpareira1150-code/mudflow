@@ -89,32 +89,39 @@ export const CRM: React.FC<CRMProps> = ({ user, doctors, selectedDoctorId, onDoc
     e.preventDefault();
     if (!draggedApptId) return;
 
+    const appt = appointments.find(a => a.id === draggedApptId);
+    if (!appt || appt.status === targetStatus) return;
+
+    // Snapshot for Rollback
+    const oldStatus = appt.status;
+
     try {
-      const appt = appointments.find(a => a.id === draggedApptId);
-      if (appt && appt.status !== targetStatus) {
-        
-        // Optimistic UI Update
+        // 1. Optimistic UI Update (Instant Feedback)
         setAppointments(prev => prev.map(a => 
             a.id === draggedApptId ? { ...a, status: targetStatus } : a
         ));
 
-        // API Call
+        // 2. Backend Call (Logs generated automatically in dataService)
         await dataService.updateAppointmentStatus(draggedApptId, targetStatus);
         
         showToast('success', `Status alterado para ${targetStatus.replace('_', ' ')}!`);
 
-        // Log N8N simulation
+        // Log N8N simulation (Dev console only)
         if (targetStatus === AppointmentStatus.ATENDIDO) {
             console.log(`[N8N] Triggering Review Request for ${appt.patient?.name}`);
         } else if (targetStatus === AppointmentStatus.NAO_VEIO) {
             console.log(`[N8N] Triggering Recovery Flow for ${appt.patient?.name}`);
         }
-      }
+
     } catch (error) {
-      showToast('error', 'Erro ao atualizar status. Tente novamente.');
-      // Revert optimistic update is handled by subscription refresh
+        // 3. Rollback UI on Error
+        console.error("Drop failed:", error);
+        setAppointments(prev => prev.map(a => 
+            a.id === draggedApptId ? { ...a, status: oldStatus } : a
+        ));
+        showToast('error', 'Erro ao atualizar status. Revertendo...');
     } finally {
-      setDraggedApptId(null);
+        setDraggedApptId(null);
     }
   };
 

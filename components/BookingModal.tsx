@@ -3,9 +3,12 @@ import React, { useState, useEffect } from 'react';
 import { User, Doctor, AvailableSlot, AppointmentStatus } from '../types';
 import { dataService } from '../services/mockSupabase';
 import { DatePicker } from './DatePicker';
-import { X, Check, AlertCircle, ChevronDown, Tag, User as UserIcon, Phone } from 'lucide-react';
+import { X, Check, AlertCircle, ChevronDown, Tag, User as UserIcon, Phone, FileText } from 'lucide-react';
 import { useToast } from './ToastProvider';
 import { formatPhone } from '../utils/phoneUtils';
+import { formatCPF } from '../utils/cpfUtils';
+import { validateSafe } from '../utils/validator';
+import { PatientSchema, AppointmentSchema } from '../utils/validationSchemas';
 
 interface BookingModalProps {
   isOpen: boolean;
@@ -40,9 +43,10 @@ export const BookingModal: React.FC<BookingModalProps> = ({
   const [date, setDate] = useState<string>('');
   const [selectedTime, setSelectedTime] = useState<string>('');
   
-  // Patient Info
+  // Patient Info (Interface Simples - Inputs Diretos)
   const [patientName, setPatientName] = useState('');
   const [patientPhone, setPatientPhone] = useState('');
+  const [patientCpf, setPatientCpf] = useState('');
   
   // Appointment Details
   const [procedure, setProcedure] = useState('');
@@ -68,6 +72,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
       // Clear fields
       setPatientName('');
       setPatientPhone('');
+      setPatientCpf('');
       setProcedure('');
       setNotes('');
       setError('');
@@ -94,18 +99,32 @@ export const BookingModal: React.FC<BookingModalProps> = ({
     setPatientPhone(formatPhone(e.target.value));
   };
 
+  const handleCpfChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setPatientCpf(formatCPF(e.target.value));
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    // Validation
-    if (!selectedDoctor || !date || !selectedTime || !patientName || !patientPhone) {
-      setError("Preencha todos os campos obrigatórios.");
-      showToast('warning', "Nome, Telefone, Médico e Horário são obrigatórios.");
+    // 1. Validação Básica de Preenchimento
+    if (!selectedDoctor || !date || !selectedTime) {
+      setError("Preencha Médico, Data e Horário.");
       return;
     }
 
-    if (patientName.length < 3) {
-      setError("O nome do paciente deve ser completo.");
+    // 2. Validação dos Dados do Paciente (Zod)
+    // Validamos nome, telefone e cpf
+    const patientValidation = validateSafe(PatientSchema.pick({ name: true, phone: true, cpf: true, organizationId: true }), {
+      name: patientName,
+      phone: patientPhone,
+      cpf: patientCpf,
+      organizationId: user.clinicId
+    });
+
+    if (!patientValidation.success) {
+      const errorMsg = patientValidation.errors?.[0] || 'Dados do paciente inválidos.';
+      setError(errorMsg);
+      showToast('warning', errorMsg);
       return;
     }
 
@@ -113,32 +132,45 @@ export const BookingModal: React.FC<BookingModalProps> = ({
     setError('');
     
     try {
-      // 1. Find or Create Patient (Backend Logic Integration)
-      // This maintains the robust data structure while keeping UI simple
+      // 3. Buscar ou Criar Paciente (Robustez do Backend)
+      // O sistema verifica se o telefone já existe. Se sim, usa o paciente existente.
+      // Se não, cria um novo automaticamente.
+      const validPatientData = patientValidation.data as any;
       const patient = await dataService.getOrCreatePatient({
-        name: patientName,
-        phone: patientPhone,
+        name: validPatientData.name,
+        phone: validPatientData.phone,
+        cpf: validPatientData.cpf,
         organizationId: user.clinicId
       });
 
-      // 2. Create Appointment linked to Patient ID
-      await dataService.createAppointment({
+      // 4. Montar Payload do Agendamento
+      const appointmentPayload = {
         clinicId: user.clinicId,
         doctorId: selectedDoctor,
-        patientId: patient.id, // Relational Link
+        patientId: patient.id, // Vínculo Relacional Automático
         date,
         time: selectedTime,
         status: AppointmentStatus.AGENDADO,
         procedure: procedure || 'Consulta',
         notes
-      });
+      };
+
+      // 5. Validação do Agendamento (Zod)
+      // Garante que todos os dados do agendamento estão corretos antes de enviar
+      const appointmentValidation = validateSafe(AppointmentSchema, appointmentPayload);
+      if (!appointmentValidation.success) {
+          throw new Error(appointmentValidation.errors?.join(', ') || 'Erro nos dados do agendamento.');
+      }
+
+      // 6. Criar Agendamento
+      await dataService.createAppointment(appointmentPayload);
       
       showToast('success', 'Agendamento realizado!');
       onSuccess();
       onClose();
     } catch (err: any) {
       setError(err.message || "Erro ao criar agendamento.");
-      showToast('error', 'Erro ao processar agendamento.');
+      showToast('error', err.message || 'Erro ao processar agendamento.');
     } finally {
       setLoading(false);
     }
@@ -166,7 +198,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
         {/* Content */}
         <form onSubmit={handleSubmit} className="p-6 overflow-y-auto space-y-6">
           
-          {/* 1. Doctor & Date Selection */}
+          {/* 1. Seleção de Médico e Data */}
           <div className="grid grid-cols-2 gap-4">
             <div className="col-span-2 sm:col-span-1">
               <label className="block text-xs font-bold text-slate-500 uppercase mb-1.5">Profissional</label>
@@ -174,7 +206,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                 <select 
                     value={selectedDoctor}
                     onChange={(e) => setSelectedDoctor(e.target.value)}
-                    disabled={!!preSelectedDoctorId} // Disable if passed from grid context
+                    disabled={!!preSelectedDoctorId}
                     className={`w-full pl-3 pr-8 py-2.5 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-slate-700 appearance-none text-sm font-medium ${preSelectedDoctorId ? 'bg-slate-50 text-slate-500' : ''}`}
                 >
                     <option value="">Selecione...</option>
@@ -192,7 +224,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
             </div>
           </div>
 
-          {/* 2. Slots Selection */}
+          {/* 2. Seleção de Horários (Slots) */}
           {selectedDoctor && (
             <div className="animate-in slide-in-from-top-2">
               <label className="block text-xs font-bold text-slate-500 uppercase mb-2 flex items-center justify-between">
@@ -230,7 +262,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
             </div>
           )}
 
-          {/* 3. Simple Inputs */}
+          {/* 3. Inputs Simples (Nome, Telefone, CPF, Tipo, Notas) */}
           <div className="space-y-4 pt-2">
              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                  <div className="md:col-span-2">
@@ -263,6 +295,21 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                  </div>
 
                  <div>
+                    <label className="block text-xs font-bold text-slate-500 uppercase mb-1.5">CPF</label>
+                    <div className="relative">
+                        <FileText className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+                        <input 
+                            type="text"
+                            value={patientCpf}
+                            onChange={handleCpfChange}
+                            maxLength={14}
+                            className="w-full pl-10 pr-4 py-2.5 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none transition-all text-slate-700 placeholder-slate-400"
+                            placeholder="000.000.000-00"
+                        />
+                    </div>
+                 </div>
+
+                 <div className="md:col-span-2">
                     <label className="block text-xs font-bold text-slate-500 uppercase mb-1.5">Tipo de Consulta</label>
                     <div className="relative">
                         <Tag className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />

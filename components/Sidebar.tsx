@@ -1,7 +1,7 @@
 
 import React from 'react';
 import { User, UserRole, ViewState } from '../types';
-import { LayoutDashboard, Users, Calendar, LogOut, Settings } from 'lucide-react';
+import { LayoutDashboard, Users, Calendar, LogOut, Settings, ClipboardList } from 'lucide-react';
 
 interface SidebarProps {
   user: User;
@@ -15,6 +15,8 @@ export const Sidebar: React.FC<SidebarProps> = ({ user, activePage, onNavigate, 
     { id: ViewState.Dashboard, label: 'Visão Global', icon: LayoutDashboard, roles: [UserRole.OWNER] },
     { id: ViewState.Dashboard, label: 'CRM', icon: LayoutDashboard, roles: [UserRole.SECRETARY, UserRole.DOCTOR_ADMIN] },
     { id: ViewState.Agenda, label: 'Agenda', icon: Calendar, roles: [UserRole.SECRETARY, UserRole.DOCTOR_ADMIN] },
+    { id: ViewState.Patients, label: 'Pacientes', icon: Users, roles: [UserRole.SECRETARY, UserRole.DOCTOR_ADMIN] },
+    { id: ViewState.Logs, label: 'Auditoria', icon: ClipboardList, roles: [UserRole.OWNER, UserRole.DOCTOR_ADMIN] },
     { id: ViewState.Settings, label: 'Administração', icon: Settings, roles: [UserRole.OWNER, UserRole.DOCTOR_ADMIN] },
   ];
 
@@ -30,7 +32,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ user, activePage, onNavigate, 
       <div className="p-4 flex-1">
         <div className="mb-6 p-3 bg-blue-50 rounded-lg">
           <p className="text-sm font-semibold text-blue-900">{user.name}</p>
-          <p className="text-xs text-blue-600 capitalize">{user.role}</p>
+          <p className="text-xs text-blue-600 capitalize">{user.role.replace('_', ' ')}</p>
         </div>
 
         <nav className="space-y-1">

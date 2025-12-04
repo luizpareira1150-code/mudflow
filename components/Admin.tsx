@@ -4,7 +4,7 @@ import React, { useState, useEffect } from 'react';
 import { User, UserRole, ClinicSettings, Doctor, Organization, AccountType } from '../types';
 import { dataService, authService } from '../services/mockSupabase';
 import Automations from './Automations';
-import { Users, Building2, UserPlus, KeyRound, Trash2, RefreshCw, AlertTriangle, X, Webhook, MessageSquare, Save, Link2, Lock, Eye, EyeOff, Stethoscope, ShieldCheck, Workflow, Copy, Shield, CheckCircle, Zap } from 'lucide-react';
+import { Users, Building2, UserPlus, KeyRound, Trash2, RefreshCw, AlertTriangle, X, Webhook, MessageSquare, Save, Link2, Lock, Eye, EyeOff, Stethoscope, ShieldCheck, Workflow, Copy, Shield, CheckCircle, Zap, Phone } from 'lucide-react';
 import { useToast } from './ToastProvider';
 import { generateApiToken } from '../services/n8nIntegration';
 
@@ -25,7 +25,9 @@ const Admin: React.FC<AdminProps> = ({ user: currentUser }) => {
     password: '', 
     role: UserRole.SECRETARY,
     accountType: AccountType.CONSULTORIO,
-    organizationName: ''
+    organizationName: '',
+    phone1: '',
+    phone2: ''
   });
   
   // --- DOCTORS STATE (For CLINICA accounts only) ---
@@ -107,14 +109,16 @@ const Admin: React.FC<AdminProps> = ({ user: currentUser }) => {
         role: allowedRoleToCreate,
         clinicId: currentUser.role === UserRole.OWNER ? `clinic_${Date.now()}` : currentUser.clinicId,
         accountType: newUser.accountType,
-        organizationName: newUser.organizationName
+        organizationName: newUser.organizationName,
+        phone1: newUser.phone1,
+        phone2: newUser.phone2
       });
       
       await loadData();
 
       setNewUser({ 
           name: '', email: '', username: '', password: '', role: UserRole.SECRETARY,
-          accountType: AccountType.CONSULTORIO, organizationName: ''
+          accountType: AccountType.CONSULTORIO, organizationName: '', phone1: '', phone2: ''
       });
       showToast('success', 'Usuário criado com sucesso!');
     } catch (error: any) {
@@ -363,6 +367,37 @@ const Admin: React.FC<AdminProps> = ({ user: currentUser }) => {
                     />
                 </div>
 
+                {currentUser.role === UserRole.OWNER && (
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700">Telefone 1</label>
+                        <div className="relative">
+                          <input
+                              type="text"
+                              value={newUser.phone1}
+                              onChange={e => setNewUser({...newUser, phone1: e.target.value})}
+                              className="w-full border border-gray-200 bg-white text-gray-900 rounded-lg pl-8 pr-2 py-2 mt-1 focus:ring-2 focus:ring-blue-500 outline-none transition-all placeholder-gray-400"
+                              placeholder="(00) 00000-0000"
+                          />
+                          <Phone size={14} className="absolute left-2.5 top-4 text-gray-400" />
+                        </div>
+                    </div>
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700">Telefone 2</label>
+                        <div className="relative">
+                          <input
+                              type="text"
+                              value={newUser.phone2}
+                              onChange={e => setNewUser({...newUser, phone2: e.target.value})}
+                              className="w-full border border-gray-200 bg-white text-gray-900 rounded-lg pl-8 pr-2 py-2 mt-1 focus:ring-2 focus:ring-blue-500 outline-none transition-all placeholder-gray-400"
+                              placeholder="(00) 00000-0000"
+                          />
+                          <Phone size={14} className="absolute left-2.5 top-4 text-gray-400" />
+                        </div>
+                    </div>
+                  </div>
+                )}
+
                 <div className="grid grid-cols-2 gap-4">
                 <div>
                     <label className="block text-sm font-medium text-gray-700">Login</label>
@@ -442,6 +477,7 @@ const Admin: React.FC<AdminProps> = ({ user: currentUser }) => {
                         <span className="text-xs text-gray-400">({u.username})</span>
                         </div>
                         <p className="text-xs text-gray-500">{u.email}</p>
+                        {u.phone1 && <p className="text-[10px] text-gray-400 mt-1">Tel: {u.phone1} {u.phone2 ? `/ ${u.phone2}` : ''}</p>}
                         <div className="mt-1">
                         <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold
                             ${u.role === UserRole.OWNER ? 'bg-purple-50 text-purple-700' : ''}

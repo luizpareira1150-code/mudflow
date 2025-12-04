@@ -6,6 +6,8 @@ import { Patient, PatientStatus } from '../types';
 import { useToast } from './ToastProvider';
 import { validateCPF, formatCPF, normalizeCPF } from '../utils/cpfUtils';
 import { formatPhone, normalizePhone } from '../utils/phoneUtils';
+import { validateSafe } from '../utils/validator';
+import { PatientSchema } from '../utils/validationSchemas';
 
 interface QuickPatientFormProps {
   organizationId: string;
@@ -23,6 +25,7 @@ export const QuickPatientForm: React.FC<QuickPatientFormProps> = ({
   const { showToast } = useToast();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [validationErrors, setValidationErrors] = useState<string[]>([]);
 
   const [formData, setFormData] = useState({
     name: initialName,
@@ -41,42 +44,45 @@ export const QuickPatientForm: React.FC<QuickPatientFormProps> = ({
     
     setFormData(prev => ({ ...prev, [field]: newValue }));
     if (error) setError('');
+    if (validationErrors.length) setValidationErrors([]);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!formData.name || !formData.phone) {
-      setError('Nome e Telefone são obrigatórios.');
+    setError('');
+    setValidationErrors([]);
+
+    // 1. Zod Validation
+    const validation = validateSafe(PatientSchema, {
+      ...formData,
+      cpf: formData.cpf || undefined, // handle empty strings as undefined for schema optional
+      email: formData.email || undefined,
+      birthDate: formData.birthDate || undefined,
+      organizationId // required
+    });
+
+    if (!validation.success) {
+      setValidationErrors(validation.errors || ['Erro de validação']);
       return;
     }
 
-    if (formData.name.length < 3) {
-      setError('Nome deve ter pelo menos 3 caracteres.');
+    // 2. Additional CPF Validation (Algorithm check)
+    if (formData.cpf && !validateCPF(formData.cpf)) {
+      setError('CPF inválido.');
       return;
-    }
-
-    const cleanPhone = normalizePhone(formData.phone);
-    if (cleanPhone.length < 10) {
-      setError('Telefone inválido (mínimo 10 dígitos).');
-      return;
-    }
-
-    if (formData.cpf) {
-      if (!validateCPF(formData.cpf)) {
-        setError('CPF inválido.');
-        return;
-      }
     }
 
     setLoading(true);
     try {
+      // 3. Save (Backend will validate again)
+      const validData = validation.data as any;
       const newPatient = await dataService.createPatient({
         organizationId,
-        name: formData.name,
-        phone: formData.phone, // We'll keep the formatting or normalize in service? Service typically wants formatted for display but normalized for search. Let's send as is, service normalizes for duplicates.
-        cpf: formData.cpf || undefined,
-        email: formData.email || undefined,
-        birthDate: formData.birthDate || undefined,
+        name: validData.name,
+        phone: validData.phone,
+        cpf: validData.cpf || undefined,
+        email: validData.email || undefined,
+        birthDate: validData.birthDate || undefined,
         status: PatientStatus.Active
       });
       
@@ -102,10 +108,23 @@ export const QuickPatientForm: React.FC<QuickPatientFormProps> = ({
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-3">
+        {/* Error Display */}
+        {(error || validationErrors.length > 0) && (
+            <div className="p-3 bg-red-50 text-red-600 text-xs rounded-lg border border-red-100 mb-3">
+                <div className="flex items-center gap-2 font-bold mb-1">
+                    <AlertCircle size={14} />
+                    <span>Verifique os erros:</span>
+                </div>
+                {error && <p>{error}</p>}
+                {validationErrors.map((err, i) => (
+                    <p key={i}>{err}</p>
+                ))}
+            </div>
+        )}
+
         <div>
           <label className="text-[10px] font-bold text-slate-500 uppercase ml-1">Nome Completo <span className="text-red-500">*</span></label>
           <input 
-            required
             value={formData.name}
             onChange={e => handleChange('name', e.target.value)}
             className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
@@ -118,7 +137,6 @@ export const QuickPatientForm: React.FC<QuickPatientFormProps> = ({
           <div>
             <label className="text-[10px] font-bold text-slate-500 uppercase ml-1">Telefone <span className="text-red-500">*</span></label>
             <input 
-              required
               value={formData.phone}
               onChange={e => handleChange('phone', e.target.value)}
               className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
@@ -159,13 +177,6 @@ export const QuickPatientForm: React.FC<QuickPatientFormProps> = ({
             />
            </div>
         </div>
-
-        {error && (
-            <div className="p-2 bg-red-50 text-red-600 text-xs rounded-lg flex items-center gap-2">
-                <AlertCircle size={14} />
-                {error}
-            </div>
-        )}
 
         <button 
           type="submit"

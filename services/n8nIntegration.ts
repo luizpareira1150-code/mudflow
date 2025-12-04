@@ -1,5 +1,7 @@
 
-import { ClinicSettings, AppointmentStatus } from '../types';
+import { ClinicSettings, AppointmentStatus, AuditAction, AuditSource } from '../types';
+import { N8NWebhookSchema } from '../utils/validationSchemas';
+import { validateSafe } from '../utils/validator';
 
 // Gera token único para cada clínica
 export const generateApiToken = (clinicId: string): string => {
@@ -97,6 +99,36 @@ export interface N8NIncomingPayload {
 // Serviço de Integração N8N
 export class N8NIntegrationService {
   
+  // ============================================================
+  // HELPERS
+  // ============================================================
+
+  // Helper to log actions via injected dependency
+  private static async logN8NAction(
+    dataService: any, 
+    params: {
+        action: AuditAction;
+        entityType: string;
+        entityId: string;
+        organizationId: string;
+        data: any;
+    }
+  ) {
+    if (dataService.logEvent) {
+        await dataService.logEvent({
+            action: params.action,
+            entityType: params.entityType,
+            entityId: params.entityId,
+            organizationId: params.organizationId,
+            newValues: params.data,
+            metadata: {
+                source: 'whatsapp_automation',
+                processedByN8N: true
+            }
+        });
+    }
+  }
+
   // ============================================================
   // ENVIAR DADOS PARA N8N (Sistema → N8N)
   // ============================================================
@@ -196,9 +228,18 @@ export class N8NIntegrationService {
     }
     
     console.log(`%c✅ Autenticação válida`, 'color: #10b981; font-weight: bold');
+
+    // 2. Validação de Schema (ZOD) - Proteção contra dados malformados
+    const validation = validateSafe(N8NWebhookSchema, payload);
+    if (!validation.success) {
+        console.error(`❌ Payload inválido:`, validation.errors);
+        console.groupEnd();
+        return { success: false, message: `Payload inválido: ${validation.errors?.join(', ')}` };
+    }
+
     console.log(`%c🎯 Ação: ${payload.action}`, 'color: #3b82f6; font-weight: bold');
     
-    // 2. Roteamento de Ação
+    // 3. Roteamento de Ação
     try {
       let result;
       
@@ -267,6 +308,20 @@ export class N8NIntegrationService {
       procedure: procedure || 'Agendamento Externo',
       notes,
       status: AppointmentStatus.AGENDADO
+    });
+
+    // ✅ AUDITORIA: Log adicional indicando origem N8N (Compliance Check)
+    await this.logN8NAction(dataService, {
+        action: AuditAction.APPOINTMENT_CREATED,
+        entityType: 'appointment',
+        entityId: appt.id,
+        organizationId: payload.clinicId,
+        data: {
+            patientName: patientName,
+            source: 'whatsapp',
+            time: time,
+            date: date
+        }
     });
     
     return {
@@ -354,7 +409,7 @@ export class N8NIntegrationService {
         organizationId: payload.clinicId
     });
 
-    await dataService.createAppointment({
+    const appt = await dataService.createAppointment({
       clinicId: payload.clinicId,
       doctorId: doctors[0].id,
       patientId: patient.id,
@@ -363,6 +418,19 @@ export class N8NIntegrationService {
       status: AppointmentStatus.EM_CONTATO,
       procedure: 'Contato Inicial',
       notes: `Origem: ${source}. Mensagem: ${message || ''}`
+    });
+
+    // ✅ AUDITORIA: Log de contato
+    await this.logN8NAction(dataService, {
+        action: AuditAction.CONTACT_CREATED,
+        entityType: 'contact',
+        entityId: appt.id,
+        organizationId: payload.clinicId,
+        data: {
+            patientName: patientName,
+            source: source,
+            message: message
+        }
     });
     
     return {

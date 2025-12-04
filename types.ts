@@ -3,7 +3,8 @@ export enum ViewState {
   Dashboard = 'Dashboard',
   Agenda = 'Agenda',
   Patients = 'Patients',
-  Settings = 'Settings'
+  Settings = 'Settings',
+  Logs = 'Logs'
 }
 
 export interface WebhookLog {
@@ -13,6 +14,76 @@ export interface WebhookLog {
   timestamp: string;
   status: 'Success' | 'Pending' | 'Failed';
   destination: string;
+}
+
+// ==========================================
+// TIPOS DE AUDITORIA (AUDIT LOGS) - COMPLIANCE LGPD
+// ==========================================
+
+export enum AuditAction {
+  // Contatos (CRM)
+  CONTACT_CREATED = 'CONTACT_CREATED', // Lead entra em contato (EM_CONTATO)
+  
+  // Agendamentos
+  APPOINTMENT_CREATED = 'APPOINTMENT_CREATED',
+  APPOINTMENT_UPDATED = 'APPOINTMENT_UPDATED',
+  APPOINTMENT_DELETED = 'APPOINTMENT_DELETED',
+  STATUS_CHANGED = 'STATUS_CHANGED',
+  AGENDA_BLOCKED = 'AGENDA_BLOCKED',
+  
+  // Pacientes
+  PATIENT_CREATED = 'PATIENT_CREATED',
+  PATIENT_UPDATED = 'PATIENT_UPDATED',
+  
+  // Usuários/Acesso
+  USER_CREATED = 'USER_CREATED',
+  USER_DELETED = 'USER_DELETED',
+  USER_LOGIN = 'USER_LOGIN',
+  USER_LOGOUT = 'USER_LOGOUT',
+  PASSWORD_RESET = 'PASSWORD_RESET',
+  
+  // Configurações e Equipe
+  DOCTOR_CREATED = 'DOCTOR_CREATED',
+  DOCTOR_DELETED = 'DOCTOR_DELETED',
+  SETTINGS_UPDATED = 'SETTINGS_UPDATED',
+  AGENDA_CONFIG_UPDATED = 'AGENDA_CONFIG_UPDATED'
+}
+
+export enum AuditSource {
+  WEB_APP = 'WEB_APP',           // Ação manual pela interface
+  N8N_WEBHOOK = 'N8N_WEBHOOK',   // Ação via automação N8N
+  WHATSAPP = 'WHATSAPP',         // Via WhatsApp (Evolution API)
+  SYSTEM = 'SYSTEM'              // Ação automática do sistema (jobs, triggers)
+}
+
+export interface AuditLog {
+  id: string;                    // UUID único
+  
+  // Identificação da Ação
+  action: AuditAction;           // Tipo de ação realizada
+  entityType: string;            // Tipo da entidade (Appointment, Patient, User, etc)
+  entityId: string;              // ID da entidade afetada
+  entityName?: string;           // Nome legível da entidade (ex: Nome do Paciente) - Cache para display
+  
+  // Contexto da Organização
+  organizationId: string;        // Clínica/consultório
+  
+  // Quem fez a ação (Traceability)
+  userId?: string;               // ID do usuário (se manual)
+  userName?: string;             // Nome do usuário (cache)
+  source: AuditSource;           // Origem da ação
+  
+  // Dados da Mudança (Compliance/LGPD)
+  oldValues?: Record<string, any>;  // Valores antes da mudança (JSON)
+  newValues?: Record<string, any>;  // Valores depois da mudança (JSON)
+  
+  // Informações Adicionais
+  description: string;           // Descrição legível da ação
+  metadata?: Record<string, any>; // Dados extras (IP, device, userAgent, etc)
+  
+  // Timestamp
+  timestamp: string;             // Data e hora do evento (ISO 8601)
+  readonly createdAt: string;    // Data de criação do registro (Imutável)
 }
 
 // --- CRM Domain Types ---
@@ -50,6 +121,8 @@ export interface User {
   email: string;
   role: UserRole;
   clinicId: string;
+  phone1?: string;
+  phone2?: string;
 }
 
 export interface Organization {
@@ -79,7 +152,6 @@ export interface AvailableSlot {
   appointment?: Appointment; 
 }
 
-// ✅ NEW PATIENT INTERFACE
 export interface Patient {
   id: string;
   organizationId: string;
@@ -100,16 +172,14 @@ export interface Patient {
   updatedAt: string;
 }
 
-// ✅ UPDATED APPOINTMENT INTERFACE
 export interface Appointment {
   id: string;
   clinicId: string; 
   doctorId: string; 
   slotId?: string;  
   
-  // Relational Link - No more name/phone duplication
   patientId: string;
-  patient?: Patient; // Populated at runtime via Service Join
+  patient?: Patient; 
   
   date: string; 
   time: string; 
@@ -121,15 +191,16 @@ export interface Appointment {
   
   n8nProcessed?: boolean;
   createdAt?: string;
+  updatedAt?: string;
 
-  // Legacy fields for migration support (optional)
+  // Legacy fields for migration support
   patientName?: string;
   patientPhone?: string;
 }
 
 export interface AgendaConfig {
   clinicId: string;
-  doctorId?: string; // Configuração específica por médico
+  doctorId?: string; 
   startHour: string; 
   endHour: string;   
   intervalMinutes: number; 
@@ -141,9 +212,9 @@ export interface ClinicSettings {
   n8nWebhookUrl?: string;       
   evolutionInstanceName?: string; 
   evolutionApiKey?: string;
-  clinicToken?: string; // Token legado para API de entrada
-  apiToken?: string; // NOVO: Token único para autenticação N8N → Sistema
-  n8nProductionMode?: boolean; // false = simulação, true = enviar de verdade
+  clinicToken?: string; 
+  apiToken?: string; 
+  n8nProductionMode?: boolean; 
 }
 
 export interface Session {
@@ -184,33 +255,29 @@ export interface ClientHealthMetrics {
   clientId: string;
   clientName: string;
   accountType: 'CONSULTORIO' | 'CLINICA';
-  lastUsed: string; // ISO date
+  lastUsed: string; 
   appointmentsThisMonth: number;
   appointmentsThisWeek: number;
   automationsActive: boolean;
   webhookStatus: 'healthy' | 'warning' | 'critical';
-  healthScore: 'healthy' | 'attention' | 'risk'; // 🟢🟡🔴
+  healthScore: 'healthy' | 'attention' | 'risk'; 
   
-  // Métricas semanais
   weeklyContacts: number;
   weeklyScheduled: number;
   weeklyAttended: number;
   weeklyCancelled: number;
   
-  // Métricas mensais
   monthlyContacts: number;
   monthlyScheduled: number;
   monthlyAttended: number;
   monthlyCancelled: number;
   
-  // Comparação
-  growthVsLastMonth: number; // percentual
+  growthVsLastMonth: number; 
   
-  // Tráfego pago (para análise de upsell)
   avgAppointmentsPerDay: number;
   availableSlots: number;
-  occupancyRate: number; // %
-  noShowRate: number; // %
+  occupancyRate: number; 
+  noShowRate: number; 
   needsTrafficAnalysis: boolean;
 }
 
@@ -220,6 +287,6 @@ export interface GlobalMetrics {
   totalAppointmentsThisMonth: number;
   totalAutomationsSent: number;
   automationSuccessRate: number;
-  mrr: number; // Monthly Recurring Revenue
-  growthRate: number; // % vs mês anterior
+  mrr: number; 
+  growthRate: number; 
 }

@@ -1,9 +1,12 @@
 
-import { User, UserRole, Appointment, AppointmentStatus, AgendaConfig, ClinicSettings, Doctor, AvailableSlot, Organization, AccountType, ClientHealthMetrics, GlobalMetrics, Patient, PatientStatus } from '../types';
+import { User, UserRole, Appointment, AppointmentStatus, AgendaConfig, ClinicSettings, Doctor, AvailableSlot, Organization, AccountType, ClientHealthMetrics, GlobalMetrics, Patient, PatientStatus, AuditLog, AuditAction, AuditSource } from '../types';
 import { N8NIntegrationService, N8NOutgoingPayload, generateApiToken } from './n8nIntegration';
 import { passwordService } from './passwordService';
 import { normalizeCPF } from '../utils/cpfUtils';
 import { normalizePhone } from '../utils/phoneUtils';
+import { PatientSchema, AppointmentSchema, AppointmentUpdateSchema, IntegrationSettingsSchema } from '../utils/validationSchemas';
+import { validate } from '../utils/validator';
+import { z } from 'zod';
 
 // Updated interface to use hash instead of plain password
 interface StoredUser extends User {
@@ -92,12 +95,77 @@ const initialAppointments: Appointment[] = [
     clinicId: ORG_CLINICA_ID, 
     doctorId: 'doc_cli_1',
     slotId: 'slot_1',
-    patientId: 'pat_1', // Linked to initialPatients[0]
+    patientId: 'pat_1', 
     date: new Date().toISOString().split('T')[0], 
     time: '09:00', 
     status: AppointmentStatus.AGENDADO,
     procedure: 'Consulta Inicial',
     notes: 'Paciente novo'
+  }
+];
+
+// INITIAL AUDIT LOGS MOCK
+const initialLogs: AuditLog[] = [
+  {
+    id: 'log_1',
+    organizationId: ORG_CLINICA_ID,
+    userId: 'user_med_cli',
+    userName: 'Dr. Diretor',
+    source: AuditSource.WEB_APP,
+    action: AuditAction.APPOINTMENT_CREATED,
+    entityType: 'Appointment',
+    entityId: 'appt_1',
+    entityName: 'João da Silva',
+    description: 'Criou agendamento para 09:00',
+    timestamp: new Date(Date.now() - 1000 * 60 * 60 * 2).toISOString(),
+    createdAt: new Date(Date.now() - 1000 * 60 * 60 * 2).toISOString(),
+    newValues: { date: 'Hoje', time: '09:00', procedure: 'Consulta Inicial' },
+    metadata: { createdVia: 'direct_booking' }
+  },
+  {
+    id: 'log_2',
+    organizationId: ORG_CLINICA_ID,
+    userId: 'user_sec',
+    userName: 'Secretária Ana',
+    source: AuditSource.WEB_APP,
+    action: AuditAction.PATIENT_CREATED,
+    entityType: 'Patient',
+    entityId: 'pat_1',
+    entityName: 'Maria Oliveira',
+    description: 'Cadastrou novo paciente via telefone',
+    timestamp: new Date(Date.now() - 1000 * 60 * 60 * 24).toISOString(),
+    createdAt: new Date(Date.now() - 1000 * 60 * 60 * 24).toISOString(),
+  },
+  {
+    id: 'log_3',
+    organizationId: ORG_CLINICA_ID,
+    userId: 'user_sec',
+    userName: 'Secretária Ana',
+    source: AuditSource.WEB_APP,
+    action: AuditAction.STATUS_CHANGED,
+    entityType: 'Appointment',
+    entityId: 'appt_x',
+    entityName: 'Pedro Santos',
+    description: 'Marcou como Atendido',
+    oldValues: { status: 'AGENDADO' },
+    newValues: { status: 'ATENDIDO' },
+    timestamp: new Date(Date.now() - 1000 * 60 * 60 * 5).toISOString(),
+    createdAt: new Date(Date.now() - 1000 * 60 * 60 * 5).toISOString(),
+  },
+  {
+    id: 'log_4',
+    organizationId: ORG_CLINICA_ID,
+    userId: 'system',
+    userName: 'N8N Automation',
+    source: AuditSource.N8N_WEBHOOK,
+    action: AuditAction.APPOINTMENT_CREATED,
+    entityType: 'Appointment',
+    entityId: 'appt_y',
+    entityName: 'Carlos API',
+    description: 'Agendamento via WhatsApp (Bot)',
+    timestamp: new Date(Date.now() - 1000 * 60 * 30).toISOString(),
+    createdAt: new Date(Date.now() - 1000 * 60 * 30).toISOString(),
+    metadata: { createdVia: 'contact_flow' }
   }
 ];
 
@@ -107,6 +175,7 @@ const USERS_KEY = 'medflow_users';
 const DOCTORS_KEY = 'medflow_doctors';
 const APPOINTMENTS_KEY = 'medflow_appointments';
 const PATIENTS_KEY = 'medflow_patients'; 
+const LOGS_KEY = 'medflow_audit_logs'; 
 const CURRENT_USER_KEY = 'medflow_current_user';
 const AGENDA_CONFIG_KEY = 'medflow_agenda_config';
 const CLINIC_SETTINGS_KEY = 'medflow_clinic_settings';
@@ -125,6 +194,68 @@ const getStorage = <T>(key: string, initial: T): T => {
 
 const setStorage = <T>(key: string, data: T) => {
   localStorage.setItem(key, JSON.stringify(data));
+};
+
+// --- AUDIT LOG SERVICE (CORPORATE) ---
+export const systemLogService = {
+  getLogs: async (clinicId: string): Promise<AuditLog[]> => {
+    await delay(300);
+    const logs = getStorage<AuditLog[]>(LOGS_KEY, initialLogs);
+    // Sort by timestamp desc
+    return logs
+      .filter(l => l.organizationId === clinicId)
+      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+  },
+  
+  createLog: async (logParams: Omit<AuditLog, 'id' | 'timestamp' | 'createdAt' | 'userId' | 'userName'> & { userId?: string, userName?: string }) => {
+    const logs = getStorage<AuditLog[]>(LOGS_KEY, initialLogs);
+    
+    // Resolve actor
+    const currentUser = authService.getCurrentUser();
+    
+    // Fallback logic for userId/userName if not provided
+    let userId = logParams.userId;
+    let userName = logParams.userName;
+
+    if (!userId) {
+        if (currentUser) {
+            userId = currentUser.id;
+            userName = currentUser.name;
+        } else {
+            userId = 'system';
+            userName = 'System';
+        }
+    }
+    
+    // Override userName if source is N8N
+    if (logParams.source === AuditSource.N8N_WEBHOOK) {
+        userName = userName || 'N8N Automation';
+        userId = userId || 'n8n_bot';
+    }
+
+    const newLog: AuditLog = {
+      ...logParams,
+      id: `log_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
+      timestamp: new Date().toISOString(),
+      createdAt: new Date().toISOString(),
+      userId: userId!,
+      userName: userName!
+    };
+    
+    logs.push(newLog);
+    setStorage(LOGS_KEY, logs);
+    return newLog;
+  }
+};
+
+// Helper for user context to be used inside DataService
+const getCurrentUserContext = () => {
+  const currentUser = authService.getCurrentUser();
+  return {
+    userId: currentUser?.id || 'system',
+    userName: currentUser?.name || 'System',
+    source: AuditSource.WEB_APP
+  };
 };
 
 // --- SERVICES ---
@@ -167,7 +298,6 @@ export const n8nService = {
     const orgs = getStorage<Organization[]>(ORGS_KEY, initialOrganizations);
     const org = orgs.find(o => o.id === clinicId);
 
-    // Look up patient details if ID is present
     let patientDetails = { name: data.patientName, phone: data.patientPhone };
     if (data.patientId && !data.patientName) {
          const patients = getStorage<Patient[]>(PATIENTS_KEY, initialPatients);
@@ -246,6 +376,17 @@ export const dataService = {
     doctors.push(newDoctor);
     setStorage(DOCTORS_KEY, doctors);
     
+    systemLogService.createLog({
+        organizationId: doctor.organizationId,
+        source: AuditSource.WEB_APP,
+        action: AuditAction.DOCTOR_CREATED,
+        entityType: 'Doctor',
+        entityId: newDoctor.id,
+        entityName: newDoctor.name,
+        description: `Médico ${newDoctor.name} adicionado`,
+        newValues: newDoctor
+    });
+    
     n8nService.triggerWebhook('DOCTOR_CREATED', {
         doctorId: newDoctor.id,
         doctorName: newDoctor.name,
@@ -275,6 +416,17 @@ export const dataService = {
             doctorName: doc.name,
             clinicId: doc.organizationId
         }, 'Doctor Deleted');
+        
+        systemLogService.createLog({
+            organizationId: doc.organizationId,
+            source: AuditSource.WEB_APP,
+            action: AuditAction.DOCTOR_DELETED,
+            entityType: 'Doctor',
+            entityId: doc.id,
+            entityName: doc.name,
+            description: `Médico ${doc.name} removido`,
+            oldValues: doc
+        });
     }
     window.dispatchEvent(new Event('medflow:doctors-updated'));
   },
@@ -309,6 +461,8 @@ export const dataService = {
       email: user.email,
       role: user.role,
       clinicId: user.clinicId,
+      phone1: user.phone1,
+      phone2: user.phone2,
       passwordHash: hashedPassword
     };
 
@@ -337,12 +491,38 @@ export const dataService = {
         setStorage(DOCTORS_KEY, doctors);
     }
 
+    // Log Activity
+    systemLogService.createLog({
+        organizationId: user.clinicId,
+        source: AuditSource.WEB_APP,
+        action: AuditAction.USER_CREATED,
+        entityType: 'User',
+        entityId: newUser.id,
+        entityName: newUser.name,
+        description: `Novo usuário criado: ${newUser.username} (${newUser.role})`,
+        newValues: { role: newUser.role, username: newUser.username }
+    });
+
     const { passwordHash, ...safeUser } = newUser;
     return safeUser;
   },
   deleteUser: async (id: string): Promise<void> => {
     const users = getStorage<StoredUser[]>(USERS_KEY, initialUsers);
+    const userToDelete = users.find(u => u.id === id);
     setStorage(USERS_KEY, users.filter(u => u.id !== id));
+    
+    if(userToDelete) {
+        systemLogService.createLog({
+            organizationId: userToDelete.clinicId,
+            source: AuditSource.WEB_APP,
+            action: AuditAction.USER_DELETED,
+            entityType: 'User',
+            entityId: userToDelete.id,
+            entityName: userToDelete.name,
+            description: `Usuário ${userToDelete.name} removido`,
+            oldValues: { username: userToDelete.username, role: userToDelete.role }
+        });
+    }
   },
   resetPassword: async (id: string, pass: string): Promise<void> => {
     const users = getStorage<StoredUser[]>(USERS_KEY, initialUsers);
@@ -350,6 +530,16 @@ export const dataService = {
     if (userIndex >= 0) { 
       users[userIndex].passwordHash = await passwordService.hashPassword(pass);
       setStorage(USERS_KEY, users); 
+      
+      systemLogService.createLog({
+          organizationId: users[userIndex].clinicId,
+          source: AuditSource.WEB_APP,
+          action: AuditAction.PASSWORD_RESET,
+          entityType: 'User',
+          entityId: users[userIndex].id,
+          entityName: users[userIndex].name,
+          description: `Senha resetada administrativamente para ${users[userIndex].username}`
+      });
     }
   },
 
@@ -368,9 +558,24 @@ export const dataService = {
     await delay(300);
     let configs = getStorage<AgendaConfig[]>(AGENDA_CONFIG_KEY, initialAgendaConfigs);
     const index = configs.findIndex(c => c.clinicId === newConfig.clinicId && c.doctorId === newConfig.doctorId);
+    
+    let oldConfig = index >= 0 ? configs[index] : null;
+
     if (index >= 0) configs[index] = newConfig;
     else configs.push(newConfig);
     setStorage(AGENDA_CONFIG_KEY, configs);
+    
+    systemLogService.createLog({
+        organizationId: newConfig.clinicId,
+        source: AuditSource.WEB_APP,
+        action: AuditAction.AGENDA_CONFIG_UPDATED,
+        entityType: 'AgendaConfig',
+        entityId: newConfig.doctorId || 'clinic_default',
+        entityName: 'Configuração Agenda',
+        description: 'Alterou horários/procedimentos da agenda',
+        oldValues: oldConfig || {},
+        newValues: newConfig
+    });
   },
   getProcedureOptions: async (clinicId: string, doctorId?: string): Promise<string[]> => {
     const config = await dataService.getAgendaConfig(clinicId, doctorId);
@@ -388,39 +593,53 @@ export const dataService = {
   },
   updateClinicSettings: async (newSettings: ClinicSettings): Promise<void> => {
     await delay(300);
-    if (!newSettings.apiToken) {
-      newSettings.apiToken = generateApiToken(newSettings.clinicId);
+    
+    const validatedSettings = validate(IntegrationSettingsSchema, newSettings) as z.infer<typeof IntegrationSettingsSchema>;
+
+    if (!validatedSettings.apiToken) {
+        validatedSettings.apiToken = generateApiToken(validatedSettings.clinicId);
     }
+    
     let settings = getStorage<ClinicSettings[]>(CLINIC_SETTINGS_KEY, initialSettings);
-    const index = settings.findIndex(s => s.clinicId === newSettings.clinicId);
-    if (index >= 0) settings[index] = newSettings;
-    else settings.push(newSettings);
+    const index = settings.findIndex(s => s.clinicId === validatedSettings.clinicId);
+    
+    let oldSettings: Partial<ClinicSettings> = index >= 0 ? settings[index] : {};
+
+    if (index >= 0) settings[index] = validatedSettings;
+    else settings.push(validatedSettings);
     setStorage(CLINIC_SETTINGS_KEY, settings);
+    
+    systemLogService.createLog({
+        organizationId: validatedSettings.clinicId,
+        source: AuditSource.WEB_APP,
+        action: AuditAction.SETTINGS_UPDATED,
+        entityType: 'ClinicSettings',
+        entityId: validatedSettings.clinicId,
+        entityName: 'Integrações N8N/Evolution',
+        description: 'Configurações de integração atualizadas',
+        oldValues: { n8nWebhookUrl: oldSettings.n8nWebhookUrl, productionMode: oldSettings.n8nProductionMode },
+        newValues: { n8nWebhookUrl: validatedSettings.n8nWebhookUrl, productionMode: validatedSettings.n8nProductionMode }
+    });
   },
 
-  // === PATIENTS SERVICE (NEW) ===
-  
-  // List all patients for a clinic
+  // === PATIENTS SERVICE ===
   getAllPatients: async (clinicId: string): Promise<Patient[]> => {
     await delay(200);
     const patients = getStorage<Patient[]>(PATIENTS_KEY, initialPatients);
     return patients.filter(p => p.organizationId === clinicId);
   },
   
-  // Get single patient by ID
   getPatientById: async (patientId: string): Promise<Patient | undefined> => {
     const patients = getStorage<Patient[]>(PATIENTS_KEY, initialPatients);
     return patients.find(p => p.id === patientId);
   },
   
-  // Get single patient by CPF (Validated)
   getPatientByCPF: async (cpf: string, organizationId: string): Promise<Patient | undefined> => {
       const patients = getStorage<Patient[]>(PATIENTS_KEY, initialPatients);
       const cleanCPF = normalizeCPF(cpf);
       return patients.find(p => p.organizationId === organizationId && p.cpf && normalizeCPF(p.cpf) === cleanCPF);
   },
 
-  // Search logic (used by PatientSelector)
   searchPatients: async (searchTerm: string, organizationId: string): Promise<Patient[]> => {
       await delay(150);
       const patients = getStorage<Patient[]>(PATIENTS_KEY, initialPatients);
@@ -436,16 +655,16 @@ export const dataService = {
       );
   },
 
-  // Create Patient (with Validation)
-  createPatient: async (patient: Omit<Patient, 'id' | 'createdAt' | 'updatedAt'>): Promise<Patient> => {
+  createPatient: async (patient: Omit<Patient, 'id' | 'createdAt' | 'updatedAt'>, source: AuditSource = AuditSource.WEB_APP): Promise<Patient> => {
       await delay(300);
+      const safePatientData = validate(PatientSchema, patient) as z.infer<typeof PatientSchema>;
+
       const patients = getStorage<Patient[]>(PATIENTS_KEY, initialPatients);
       
-      // 1. Validate CPF Uniqueness
-      if (patient.cpf) {
-          const cleanCPF = normalizeCPF(patient.cpf);
+      if (safePatientData.cpf) {
+          const cleanCPF = normalizeCPF(safePatientData.cpf);
           const existing = patients.find(p => 
-            p.organizationId === patient.organizationId && 
+            p.organizationId === safePatientData.organizationId && 
             p.cpf && 
             normalizeCPF(p.cpf) === cleanCPF
           );
@@ -453,7 +672,8 @@ export const dataService = {
       }
       
       const newPatient: Patient = {
-          ...patient,
+          ...patient, 
+          ...safePatientData, 
           id: `pat_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
           status: PatientStatus.Active,
           createdAt: new Date().toISOString(),
@@ -462,16 +682,38 @@ export const dataService = {
       
       patients.push(newPatient);
       setStorage(PATIENTS_KEY, patients);
+      
+      const { userId, userName } = getCurrentUserContext();
+
+      systemLogService.createLog({
+          organizationId: newPatient.organizationId,
+          source: source,
+          userId: source === AuditSource.WEB_APP ? userId : undefined,
+          userName: source === AuditSource.WEB_APP ? userName : undefined,
+          action: AuditAction.PATIENT_CREATED,
+          entityType: 'Patient',
+          entityId: newPatient.id,
+          entityName: newPatient.name,
+          description: 'Novo paciente cadastrado',
+          newValues: {
+            name: newPatient.name,
+            phone: newPatient.phone,
+            cpf: newPatient.cpf,
+            email: newPatient.email
+          },
+          metadata: {
+            patientName: newPatient.name
+          }
+      });
+
       return newPatient;
   },
   
-  // Update Patient
   updatePatient: async (patientId: string, updates: Partial<Patient>): Promise<Patient> => {
       const patients = getStorage<Patient[]>(PATIENTS_KEY, initialPatients);
       const index = patients.findIndex(p => p.id === patientId);
       if (index === -1) throw new Error("Paciente não encontrado");
       
-      // Validate CPF change
       if (updates.cpf) {
           const cleanCPF = normalizeCPF(updates.cpf);
           const currentOrg = patients[index].organizationId;
@@ -484,29 +726,59 @@ export const dataService = {
           if (existing) throw new Error("Este CPF já pertence a outro paciente.");
       }
       
+      const oldPatient = { ...patients[index] };
       patients[index] = { ...patients[index], ...updates, updatedAt: new Date().toISOString() };
       setStorage(PATIENTS_KEY, patients);
-      return patients[index];
+      
+      const updatedPatient = patients[index];
+
+      // Audit Log
+      const { userId, userName, source } = getCurrentUserContext();
+
+      await systemLogService.createLog({
+          organizationId: patients[index].organizationId,
+          source: source,
+          userId: source === AuditSource.WEB_APP ? userId : undefined,
+          userName: source === AuditSource.WEB_APP ? userName : undefined,
+          action: AuditAction.PATIENT_UPDATED,
+          entityType: 'Patient',
+          entityId: patients[index].id,
+          entityName: patients[index].name,
+          description: `Dados de ${patients[index].name} atualizados`,
+          oldValues: {
+              name: oldPatient.name,
+              phone: oldPatient.phone,
+              cpf: oldPatient.cpf,
+              email: oldPatient.email,
+              status: oldPatient.status
+          },
+          newValues: {
+              name: updatedPatient.name,
+              phone: updatedPatient.phone,
+              cpf: updatedPatient.cpf,
+              email: updatedPatient.email,
+              status: updatedPatient.status
+          },
+          metadata: {
+              patientName: updatedPatient.name
+          }
+      });
+
+      return updatedPatient;
   },
 
-  // Main Logic for Import/Integrations: Find existing or Create new
-  getOrCreatePatient: async (data: { name: string; phone: string; cpf?: string; organizationId: string }): Promise<Patient> => {
+  getOrCreatePatient: async (data: { name: string; phone: string; cpf?: string; organizationId: string }, source: AuditSource = AuditSource.WEB_APP): Promise<Patient> => {
       const patients = getStorage<Patient[]>(PATIENTS_KEY, initialPatients);
       const cleanPhone = normalizePhone(data.phone);
       const cleanCPF = data.cpf ? normalizeCPF(data.cpf) : undefined;
 
-      // 1. Try Find by CPF (Strongest Match)
       if (cleanCPF) {
           const existing = patients.find(p => p.organizationId === data.organizationId && p.cpf && normalizeCPF(p.cpf) === cleanCPF);
-          if (existing) {
-              return existing;
-          }
+          if (existing) return existing;
       }
 
-      // 2. Try Find by Phone (Fallback Match)
       const existingByPhone = patients.find(p => p.organizationId === data.organizationId && normalizePhone(p.phone) === cleanPhone);
       if (existingByPhone) {
-          // If provided CPF but record has none, update it
           if (cleanCPF && !existingByPhone.cpf) {
               existingByPhone.cpf = data.cpf;
               setStorage(PATIENTS_KEY, patients);
@@ -514,34 +786,28 @@ export const dataService = {
           return existingByPhone;
       }
 
-      // 3. Create New
       return dataService.createPatient({
           name: data.name,
           phone: data.phone,
           cpf: data.cpf,
           organizationId: data.organizationId,
           status: PatientStatus.Active
-      });
+      }, source);
   },
 
   // === APPOINTMENTS SERVICE ===
   
-  // Get Slots with JOINED Patient Data
   getAvailableSlots: async (clinicId: string, doctorId: string, date: string): Promise<AvailableSlot[]> => {
     await delay(300);
     const config = await dataService.getAgendaConfig(clinicId, doctorId);
     
-    // Fetch appointments and join patients
     const allAppts = getStorage<Appointment[]>(APPOINTMENTS_KEY, initialAppointments);
     const allPatients = getStorage<Patient[]>(PATIENTS_KEY, initialPatients);
     
-    // Filter appointments for this day/doctor, excluding 'Did Not Show' to allow rebooking if needed (optional logic)
-    // Actually, usually blocked slots and active appointments occupy space.
     const doctorAppts = allAppts
         .filter(a => a.clinicId === clinicId && a.doctorId === doctorId && a.date === date && a.status !== AppointmentStatus.NAO_VEIO)
         .map(a => ({
             ...a,
-            // runtime join
             patient: allPatients.find(p => p.id === a.patientId)
         }));
 
@@ -568,7 +834,6 @@ export const dataService = {
     return slots;
   },
 
-  // Get Appointments with JOINED Patient Data
   getAppointments: async (clinicId: string, date: string, doctorId?: string): Promise<Appointment[]> => {
     await delay(200);
     const appts = getStorage<Appointment[]>(APPOINTMENTS_KEY, initialAppointments);
@@ -577,41 +842,72 @@ export const dataService = {
     let filtered = appts.filter(a => a.clinicId === clinicId && a.date === date);
     if (doctorId) filtered = filtered.filter(a => a.doctorId === doctorId);
     
-    // JOIN Patient Data
     return filtered.map(a => ({
         ...a,
         patient: patients.find(p => p.id === a.patientId)
     }));
   },
 
-  // Create Appointment (Now requires patientId)
-  createAppointment: async (appt: Omit<Appointment, 'id' | 'patient'>): Promise<Appointment> => {
+  createAppointment: async (appt: Omit<Appointment, 'id' | 'patient'>, source: AuditSource = AuditSource.WEB_APP): Promise<Appointment> => {
     await delay(300);
+    
+    const validatedAppt = validate(AppointmentSchema, appt) as z.infer<typeof AppointmentSchema>;
+
     const appts = getStorage<Appointment[]>(APPOINTMENTS_KEY, initialAppointments);
     
-    // Check conflict
-    const exists = appts.some(a => a.clinicId === appt.clinicId && a.doctorId === appt.doctorId && a.date === appt.date && a.time === appt.time && a.status !== AppointmentStatus.NAO_VEIO);
+    const exists = appts.some(a => a.clinicId === validatedAppt.clinicId && a.doctorId === validatedAppt.doctorId && a.date === validatedAppt.date && a.time === validatedAppt.time && a.status !== AppointmentStatus.NAO_VEIO);
     if (exists) throw new Error("Horário já ocupado para este médico!");
     
-    // Validate Patient ID
-    const patient = await dataService.getPatientById(appt.patientId);
+    const patient = await dataService.getPatientById(validatedAppt.patientId);
     if (!patient) throw new Error("Paciente não encontrado. Crie o cadastro primeiro.");
     
-    const newAppt = { ...appt, id: Math.random().toString(36).substr(2, 9) };
+    const newAppt: Appointment = { 
+        ...validatedAppt, 
+        id: Math.random().toString(36).substr(2, 5),
+        createdAt: new Date().toISOString()
+    };
     appts.push(newAppt);
     setStorage(APPOINTMENTS_KEY, appts);
     
     n8nService.triggerWebhook('APPOINTMENT_CREATED', { 
         ...newAppt, 
-        reason: appt.procedure, 
+        reason: validatedAppt.procedure, 
         patientName: patient?.name,
         patientPhone: patient?.phone
     }, 'Appointment Created');
+
+    // Audit Log - Detailed Compliance
+    const actionType = newAppt.status === AppointmentStatus.EM_CONTATO 
+        ? AuditAction.CONTACT_CREATED 
+        : AuditAction.APPOINTMENT_CREATED;
+    
+    const description = actionType === AuditAction.CONTACT_CREATED
+        ? `Lead/Contato CRM: ${patient.name}`
+        : `Agendou consulta para ${newAppt.date} às ${newAppt.time}`;
+
+    const createdVia = newAppt.status === AppointmentStatus.EM_CONTATO ? 'contact_flow' : 'direct_booking';
+    
+    // Determine User Context (if passed source is not Web App, keep it, otherwise use current context)
+    const { userId, userName } = getCurrentUserContext();
+
+    systemLogService.createLog({
+        organizationId: newAppt.clinicId,
+        source: source,
+        userId: source === AuditSource.WEB_APP ? userId : undefined, // Let systemLogService handle fallback if not WEB_APP
+        userName: source === AuditSource.WEB_APP ? userName : undefined,
+        action: actionType,
+        entityType: 'Appointment',
+        entityId: newAppt.id,
+        entityName: patient.name,
+        description,
+        newValues: newAppt,
+        metadata: { createdVia }
+    });
     
     return newAppt;
   },
 
-  createBatchAppointments: async (newAppts: Omit<Appointment, 'id'>[]): Promise<void> => {
+  createBatchAppointments: async (newAppts: Omit<Appointment, 'id'>[], source: AuditSource = AuditSource.WEB_APP): Promise<void> => {
     await delay(400);
     const appts = getStorage<Appointment[]>(APPOINTMENTS_KEY, initialAppointments);
     const created = newAppts.map(a => ({ ...a, id: Math.random().toString(36).substr(2, 9) }));
@@ -625,21 +921,39 @@ export const dataService = {
     
     if (created.length > 0) {
         n8nService.triggerWebhook('AGENDA_BLOCKED', { count: addedCount, doctorId: created[0].doctorId, date: created[0].date, clinicId: created[0].clinicId }, 'Agenda Blocked');
+        
+        systemLogService.createLog({
+            organizationId: created[0].clinicId,
+            source: source,
+            action: AuditAction.AGENDA_BLOCKED,
+            entityType: 'Appointment',
+            entityId: 'batch_block',
+            entityName: 'Bloqueio de Agenda',
+            description: `Bloqueou ${created.length} horários para ${created[0].date}`,
+            metadata: { count: addedCount, date: created[0].date }
+        });
     }
   },
 
-  updateAppointmentStatus: async (id: string, status: AppointmentStatus): Promise<Appointment> => {
+  updateAppointmentStatus: async (id: string, status: AppointmentStatus, source: AuditSource = AuditSource.WEB_APP): Promise<Appointment> => {
     await delay(200);
     const appts = getStorage<Appointment[]>(APPOINTMENTS_KEY, initialAppointments);
     const index = appts.findIndex(a => a.id === id);
     if (index === -1) throw new Error("Not found");
     
     const oldStatus = appts[index].status;
+    const oldValues = { ...appts[index] }; // Capture state before change
+    
     appts[index].status = status;
+    appts[index].updatedAt = new Date().toISOString(); // Track updates
     setStorage(APPOINTMENTS_KEY, appts);
     
     const updatedAppt = appts[index];
     const patient = await dataService.getPatientById(updatedAppt.patientId);
+    
+    // Enrich log data
+    const doctors = getStorage<Doctor[]>(DOCTORS_KEY, initialDoctors);
+    const doctor = doctors.find(d => d.id === updatedAppt.doctorId);
     
     n8nService.triggerWebhook('STATUS_CHANGED', { 
         ...updatedAppt, 
@@ -648,34 +962,151 @@ export const dataService = {
         patientName: patient?.name,
         patientPhone: patient?.phone
     }, 'Status Update');
+
+    // Audit Log
+    const { userId, userName } = getCurrentUserContext();
+
+    systemLogService.createLog({
+        organizationId: updatedAppt.clinicId,
+        source: source,
+        userId: source === AuditSource.WEB_APP ? userId : undefined,
+        userName: source === AuditSource.WEB_APP ? userName : undefined,
+        action: AuditAction.STATUS_CHANGED,
+        entityType: 'Appointment',
+        entityId: updatedAppt.id,
+        entityName: patient?.name || 'Paciente',
+        description: `Status: ${oldStatus} -> ${status}`,
+        oldValues: { status: oldStatus },
+        newValues: { status: status },
+        metadata: {
+            patientName: patient?.name,
+            doctorName: doctor?.name,
+            appointmentDate: updatedAppt.date,
+            appointmentTime: updatedAppt.time,
+            oldStatus,
+            newStatus: status
+        }
+    });
     
     return updatedAppt;
   },
 
-  updateAppointment: async (updatedAppt: Appointment): Promise<Appointment> => {
+  updateAppointment: async (updatedAppt: Appointment, source: AuditSource = AuditSource.WEB_APP): Promise<Appointment> => {
     await delay(300);
+    const validatedAppt = validate(AppointmentUpdateSchema, updatedAppt) as z.infer<typeof AppointmentUpdateSchema>;
+
     const appts = getStorage<Appointment[]>(APPOINTMENTS_KEY, initialAppointments);
-    const index = appts.findIndex(a => a.id === updatedAppt.id);
+    const index = appts.findIndex(a => a.id === validatedAppt.id);
     if (index === -1) throw new Error("Agendamento não encontrado");
     
     const currentAppt = appts[index];
-    const isReschedule = currentAppt.date !== updatedAppt.date || currentAppt.time !== updatedAppt.time;
+    const oldAppt = { ...currentAppt };
+
+    const date = validatedAppt.date || currentAppt.date;
+    const time = validatedAppt.time || currentAppt.time;
+    const clinicId = validatedAppt.clinicId || currentAppt.clinicId;
+    const doctorId = validatedAppt.doctorId || currentAppt.doctorId;
+
+    const isReschedule = currentAppt.date !== date || currentAppt.time !== time;
     
     if (isReschedule) {
-      const isBooked = appts.some(a => a.id !== updatedAppt.id && a.clinicId === updatedAppt.clinicId && a.doctorId === updatedAppt.doctorId && a.date === updatedAppt.date && a.time === updatedAppt.time && a.status !== AppointmentStatus.NAO_VEIO);
+      const isBooked = appts.some(a => a.id !== validatedAppt.id && a.clinicId === clinicId && a.doctorId === doctorId && a.date === date && a.time === time && a.status !== AppointmentStatus.NAO_VEIO);
       if (isBooked) throw new Error("Conflito! Horário ocupado para este médico.");
     }
     
-    // Preserve Patient ID, update fields
-    appts[index] = { ...currentAppt, ...updatedAppt };
+    appts[index] = { ...currentAppt, ...validatedAppt, updatedAt: new Date().toISOString() };
     setStorage(APPOINTMENTS_KEY, appts);
-    return updatedAppt;
+    
+    // Enrich log
+    const patient = await dataService.getPatientById(currentAppt.patientId);
+    const doctors = getStorage<Doctor[]>(DOCTORS_KEY, initialDoctors);
+    const doctor = doctors.find(d => d.id === currentAppt.doctorId);
+    const { userId, userName } = getCurrentUserContext();
+
+    // Detect what changed
+    const changes: Record<string, any> = {};
+    if (oldAppt.date !== appts[index].date) { changes.oldDate = oldAppt.date; changes.newDate = appts[index].date; }
+    if (oldAppt.time !== appts[index].time) { changes.oldTime = oldAppt.time; changes.newTime = appts[index].time; }
+    
+    systemLogService.createLog({
+        organizationId: currentAppt.clinicId,
+        source: source,
+        userId: source === AuditSource.WEB_APP ? userId : undefined,
+        userName: source === AuditSource.WEB_APP ? userName : undefined,
+        action: AuditAction.APPOINTMENT_UPDATED,
+        entityType: 'Appointment',
+        entityId: currentAppt.id,
+        entityName: currentAppt.patient?.name || 'Paciente',
+        description: isReschedule ? `Remarcado para ${date} às ${time}` : 'Detalhes do agendamento atualizados',
+        oldValues: {
+            date: oldAppt.date,
+            time: oldAppt.time,
+            procedure: oldAppt.procedure,
+            notes: oldAppt.notes
+        },
+        newValues: {
+            date: appts[index].date,
+            time: appts[index].time,
+            procedure: appts[index].procedure,
+            notes: appts[index].notes
+        },
+        metadata: {
+            patientName: patient?.name,
+            doctorName: doctor?.name,
+            ...changes
+        }
+    });
+
+    return appts[index];
   },
 
-  deleteAppointment: async (id: string, reason?: string): Promise<void> => {
+  deleteAppointment: async (id: string, reason?: string, source: AuditSource = AuditSource.WEB_APP): Promise<void> => {
     await delay(300);
     const appts = getStorage<Appointment[]>(APPOINTMENTS_KEY, initialAppointments);
-    setStorage(APPOINTMENTS_KEY, appts.filter(a => a.id !== id));
+    const appt = appts.find(a => a.id === id);
+    
+    if (!appt) {
+        throw new Error('Agendamento não encontrado');
+    }
+
+    // 1. Gather Context BEFORE Deletion
+    const patient = await dataService.getPatientById(appt.patientId);
+    const doctors = getStorage<Doctor[]>(DOCTORS_KEY, initialDoctors);
+    const doctor = doctors.find(d => d.id === appt.doctorId);
+    const { userId, userName } = getCurrentUserContext();
+
+    // 2. Create Audit Log
+    await systemLogService.createLog({
+        organizationId: appt.clinicId,
+        source: source,
+        userId: source === AuditSource.WEB_APP ? userId : undefined,
+        userName: source === AuditSource.WEB_APP ? userName : undefined,
+        action: AuditAction.APPOINTMENT_DELETED,
+        entityType: 'Appointment',
+        entityId: appt.id,
+        entityName: patient?.name || 'Paciente', // Better entity name
+        description: `Agendamento cancelado`,
+        oldValues: {
+            patientId: appt.patientId,
+            doctorId: appt.doctorId,
+            date: appt.date,
+            time: appt.time,
+            status: appt.status,
+            procedure: appt.procedure
+        },
+        metadata: { 
+            reason: appt.status === 'BLOQUEADO' ? 'Desbloqueio de agenda' : (reason || 'Cancelamento manual'),
+            patientName: patient?.name,
+            doctorName: doctor?.name,
+            date: appt.date,
+            time: appt.time,
+            cancelledBy: source 
+        }
+    });
+
+    // 3. Perform Deletion
+    const filtered = appts.filter(a => a.id !== id);
+    setStorage(APPOINTMENTS_KEY, filtered);
   },
 
   // Subscriptions
@@ -776,6 +1207,26 @@ export const authService = {
       if (isValid) {
         const { passwordHash: _, ...safeUser } = user;
         setStorage(CURRENT_USER_KEY, safeUser);
+        
+        // Log Login
+        if (safeUser.role !== UserRole.OWNER) {
+             systemLogService.createLog({
+                organizationId: safeUser.clinicId,
+                userId: safeUser.id,
+                userName: safeUser.name,
+                source: AuditSource.WEB_APP,
+                action: AuditAction.USER_LOGIN,
+                entityType: 'User',
+                entityId: safeUser.id,
+                description: 'Login realizado com sucesso',
+                metadata: {
+                    userName: safeUser.name,
+                    userRole: safeUser.role,
+                    loginTime: new Date().toISOString()
+                }
+            });
+        }
+        
         return safeUser;
       }
     }
@@ -814,7 +1265,26 @@ export const authService = {
     return false;
   },
 
-  logout: async () => localStorage.removeItem(CURRENT_USER_KEY),
+  logout: async () => {
+    const user = authService.getCurrentUser();
+    if(user && user.role !== UserRole.OWNER) {
+        await systemLogService.createLog({
+            organizationId: user.clinicId,
+            userId: user.id,
+            userName: user.name,
+            source: AuditSource.WEB_APP,
+            action: AuditAction.USER_LOGOUT,
+            entityType: 'User',
+            entityId: user.id,
+            description: 'Logout realizado',
+            metadata: {
+                userName: user.name,
+                logoutTime: new Date().toISOString()
+            }
+        });
+    }
+    localStorage.removeItem(CURRENT_USER_KEY);
+  },
   
   getCurrentUser: (): User | null => {
     const stored = localStorage.getItem(CURRENT_USER_KEY);
@@ -823,55 +1293,45 @@ export const authService = {
 };
 
 // --- AUTOMATIC MIGRATION SCRIPT ---
-// This runs once to convert legacy Appointment structures (with name/phone) 
-// to the new Relational structure (patientId).
 const migrateExistingAppointments = async () => {
   const appointments = getStorage<Appointment[]>(APPOINTMENTS_KEY, initialAppointments);
   let hasChanges = false;
   
   for (const appt of appointments) {
-    // Check if it's a legacy appointment (has name but missing/broken ID linkage)
-    // Note: Our types.ts defines patientName as optional now, but in raw storage it might exist.
     if ((appt as any).patientName && (appt as any).patientPhone && !appt.patientId) {
-       console.log(`[MIGRATION] Migrating appointment ${appt.id}...`);
-       
        const patient = await dataService.getOrCreatePatient({
            name: (appt as any).patientName,
            phone: (appt as any).patientPhone,
            organizationId: appt.clinicId
-       });
-       
+       }, AuditSource.SYSTEM);
        appt.patientId = patient.id;
        delete (appt as any).patientName;
        delete (appt as any).patientPhone;
        hasChanges = true;
     } 
-    // Case 2: Has patientId but it points to nothing (legacy Mock data)
     else if (appt.patientId) {
         const patientExists = await dataService.getPatientById(appt.patientId);
         if (!patientExists && (appt as any).patientName) {
-            // Re-create the missing patient
-            const patient = await dataService.createPatient({
-                id: appt.patientId, // Keep ID if possible or generate new? Let's use old ID to maintain consistency
+            await dataService.createPatient({
+                id: appt.patientId,
                 name: (appt as any).patientName || 'Paciente Migrado',
                 phone: (appt as any).patientPhone || '',
                 organizationId: appt.clinicId,
                 status: PatientStatus.Active,
                 createdAt: new Date().toISOString(),
                 updatedAt: new Date().toISOString()
-            } as any);
+            } as any, AuditSource.SYSTEM);
         }
     }
   }
   
   if (hasChanges) {
     setStorage(APPOINTMENTS_KEY, appointments);
-    console.log('[MIGRATION] Appointments migrated to new Patient structure.');
   }
 };
-// Run migration
 setTimeout(migrateExistingAppointments, 1000);
 
+// HANDLE N8N INCOMING
 export const webhookService = {
   receiveFromN8N: async (payload: { action: 'CREATE_APPOINTMENT' | 'UPDATE_STATUS' | 'BLOCK_SCHEDULE' | 'CREATE_PATIENT_CONTACT'; data: any; clinicId: string; authToken: string; }) => {
     await delay(200);
@@ -879,6 +1339,18 @@ export const webhookService = {
     const validTokens = new Map<string, string>();
     if (settings.apiToken) validTokens.set(payload.clinicId, settings.apiToken);
     if (!settings.apiToken && settings.clinicToken) validTokens.set(payload.clinicId, settings.clinicToken);
-    return await N8NIntegrationService.receiveFromN8N(payload as any, validTokens, dataService);
+    
+    // Pass N8N Source Context and Inject Logger
+    return await N8NIntegrationService.receiveFromN8N(payload as any, validTokens, {
+        ...dataService,
+        createAppointment: (appt: any) => dataService.createAppointment(appt, AuditSource.N8N_WEBHOOK),
+        updateAppointmentStatus: (id: string, status: AppointmentStatus) => dataService.updateAppointmentStatus(id, status, AuditSource.N8N_WEBHOOK),
+        createBatchAppointments: (appts: any) => dataService.createBatchAppointments(appts, AuditSource.N8N_WEBHOOK),
+        getOrCreatePatient: (data: any) => dataService.getOrCreatePatient(data, AuditSource.N8N_WEBHOOK),
+        // Inject Logger for N8N Service
+        logEvent: (params: any) => systemLogService.createLog({ ...params, source: AuditSource.N8N_WEBHOOK })
+    });
   }
 };
+
+export const auditService = systemLogService;

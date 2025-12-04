@@ -12,6 +12,7 @@ import { authService, dataService } from './services/mockSupabase';
 import { Loader2 } from 'lucide-react';
 import { ToastProvider } from './components/ToastProvider';
 import OwnerDashboard from './components/OwnerDashboard';
+import { ActivityLogs } from './components/ActivityLogs';
 
 const App: React.FC = () => {
   const [currentView, setView] = useState<ViewState>(ViewState.Dashboard);
@@ -134,6 +135,8 @@ const App: React.FC = () => {
         return <Patients />;
       case ViewState.Settings:
         return <Admin user={user} />;
+      case ViewState.Logs:
+        return <ActivityLogs user={user} />;
       default:
         return <Dashboard />;
     }
