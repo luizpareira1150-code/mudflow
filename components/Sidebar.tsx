@@ -1,7 +1,6 @@
-
 import React from 'react';
 import { User, UserRole, ViewState } from '../types';
-import { LayoutDashboard, Users, Calendar, LogOut, Settings, ClipboardList } from 'lucide-react';
+import { LayoutDashboard, Users, Calendar, LogOut, Settings, ClipboardList, BarChart3 } from 'lucide-react';
 
 interface SidebarProps {
   user: User;
@@ -12,7 +11,7 @@ interface SidebarProps {
 
 export const Sidebar: React.FC<SidebarProps> = ({ user, activePage, onNavigate, onLogout }) => {
   const menuItems = [
-    { id: ViewState.Dashboard, label: 'Visão Global', icon: LayoutDashboard, roles: [UserRole.OWNER] },
+    { id: ViewState.Dashboard, label: 'Dashboard', icon: BarChart3, roles: [UserRole.OWNER] },
     { id: ViewState.Dashboard, label: 'CRM', icon: LayoutDashboard, roles: [UserRole.SECRETARY, UserRole.DOCTOR_ADMIN] },
     { id: ViewState.Agenda, label: 'Agenda', icon: Calendar, roles: [UserRole.SECRETARY, UserRole.DOCTOR_ADMIN] },
     { id: ViewState.Patients, label: 'Pacientes', icon: Users, roles: [UserRole.SECRETARY, UserRole.DOCTOR_ADMIN] },

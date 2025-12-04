@@ -1,22 +1,19 @@
-
 import React, { useState, useEffect, useMemo } from 'react';
 import { 
   TrendingUp, Users, Calendar, AlertTriangle, 
   CheckCircle, Zap, Building2, Filter, 
   Bell, RefreshCw, Award, Target, DollarSign,
-  ArrowUp, ArrowDown, Minus, Activity, MessageSquare, Phone, ChevronDown
+  ArrowUp, ArrowDown, Minus, Activity, MessageSquare, Phone, ChevronDown,
+  BarChart3, ExternalLink, Download, UserPlus, Eye
 } from 'lucide-react';
 import { analyticsService } from '../services/mockSupabase';
 import { User, ClientHealthMetrics, GlobalMetrics } from '../types';
 
-interface OwnerDashboardProps {
-  currentUser: User;
-}
-
-const OwnerDashboard: React.FC<OwnerDashboardProps> = ({ currentUser }) => {
+export const OwnerDashboard: React.FC<{ currentUser: User }> = ({ currentUser }) => {
   const [loading, setLoading] = useState(true);
   const [globalMetrics, setGlobalMetrics] = useState<GlobalMetrics | null>(null);
   const [clientsMetrics, setClientsMetrics] = useState<ClientHealthMetrics[]>([]);
+  const [showQuickActions, setShowQuickActions] = useState(false);
 
   // Filtros Globais
   const [filterPeriod, setFilterPeriod] = useState<'7d' | '30d' | 'custom'>('30d');
@@ -50,15 +47,23 @@ const OwnerDashboard: React.FC<OwnerDashboardProps> = ({ currentUser }) => {
   
   const currentAutoStats = automationStats[automationPeriod];
 
+  const systemLogs = [
+    { time: '14:35', level: 'info', message: 'Clínica Saúde: Webhook enviado (APPOINTMENT_CREATED)' },
+    { time: '14:32', level: 'info', message: 'Dr. Silva: Agenda bloqueada para 25/Dez' },
+    { time: '14:30', level: 'error', message: 'Clínica Vida: Webhook falhou (404 Not Found)' },
+    { time: '14:28', level: 'info', message: 'Dr. Santos: Login realizado após 30 dias' },
+    { time: '14:25', level: 'info', message: 'Clínica Exemplo: Novo agendamento criado' },
+    { time: '14:20', level: 'warning', message: 'Dr. Costa: Evolution API reconectada após falha temporária' },
+    { time: '14:15', level: 'error', message: 'Clínica Norte: Evolution API desconectada' }
+  ];
+
   const calculateMetrics = async () => {
     setLoading(true);
-    
     try {
       const { global, clients } = await analyticsService.getOwnerDashboardMetrics();
       setGlobalMetrics(global);
       setClientsMetrics(clients);
       generateNotifications(clients);
-      
     } catch (error) {
       console.error('Erro ao calcular métricas:', error);
     } finally {
@@ -68,7 +73,6 @@ const OwnerDashboard: React.FC<OwnerDashboardProps> = ({ currentUser }) => {
 
   const generateNotifications = (metrics: ClientHealthMetrics[]) => {
     const notifs = [];
-    
     const riskClients = metrics.filter(m => m.healthScore === 'risk');
     if (riskClients.length > 0) {
       notifs.push({
@@ -78,7 +82,6 @@ const OwnerDashboard: React.FC<OwnerDashboardProps> = ({ currentUser }) => {
         action: 'view_clients'
       });
     }
-    
     const webhookIssues = metrics.filter(m => m.webhookStatus === 'warning');
     if (webhookIssues.length > 0) {
       notifs.push({
@@ -88,7 +91,6 @@ const OwnerDashboard: React.FC<OwnerDashboardProps> = ({ currentUser }) => {
         action: 'view_logs'
       });
     }
-    
     setNotifications(notifs);
   };
 
@@ -103,7 +105,6 @@ const OwnerDashboard: React.FC<OwnerDashboardProps> = ({ currentUser }) => {
     const now = new Date();
     const diffMs = now.getTime() - date.getTime();
     const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-    
     if (diffDays === 0) return 'Hoje';
     if (diffDays === 1) return 'Ontem';
     if (diffDays < 7) return `${diffDays} dias`;
@@ -119,48 +120,6 @@ const OwnerDashboard: React.FC<OwnerDashboardProps> = ({ currentUser }) => {
     });
   }, [clientsMetrics, filterAccountType, filterHealthStatus]);
 
-  const alertsList = useMemo(() => {
-    const alerts: any[] = [];
-    
-    // Clientes em risco
-    const riskClients = clientsMetrics.filter(c => c.healthScore === 'risk');
-    riskClients.forEach(client => {
-      alerts.push({
-        severity: 'critical',
-        title: `${client.clientName}: Cliente em risco de churn`,
-        description: `Sem uso há ${formatRelativeDate(client.lastUsed)} • Apenas ${client.appointmentsThisMonth} agendamentos este mês`,
-        timestamp: 'Detectado há 2 horas',
-        action: 'Contatar Cliente'
-      });
-    });
-    
-    // Webhooks com problemas
-    const webhookIssues = clientsMetrics.filter(c => c.webhookStatus === 'warning' || c.webhookStatus === 'critical');
-    webhookIssues.slice(0, 3).forEach(client => {
-      alerts.push({
-        severity: 'warning',
-        title: `${client.clientName}: Webhook falhando`,
-        description: 'Últimas 3 tentativas resultaram em erro 404 (N8N workflow deletado?)',
-        timestamp: 'Última tentativa há 1 hora',
-        action: 'Verificar N8N'
-      });
-    });
-    
-    // Automações desativadas
-    const noAutomation = clientsMetrics.filter(c => !c.automationsActive);
-    if (noAutomation.length > 0) {
-      alerts.push({
-        severity: 'info',
-        title: `${noAutomation.length} cliente(s) sem automações ativas`,
-        description: 'Eles podem não saber como configurar corretamente',
-        timestamp: 'Verificado agora',
-        action: 'Enviar Tutorial'
-      });
-    }
-    
-    return alerts.slice(0, 5); // Máximo 5 alertas
-  }, [clientsMetrics]);
-
   const topClients = useMemo(() => {
     return [...clientsMetrics]
       .sort((a, b) => b.appointmentsThisMonth - a.appointmentsThisMonth)
@@ -173,6 +132,135 @@ const OwnerDashboard: React.FC<OwnerDashboardProps> = ({ currentUser }) => {
       .sort((a, b) => a.appointmentsThisMonth - b.appointmentsThisMonth)
       .slice(0, 5);
   }, [clientsMetrics]);
+
+  // --- TRAFFIC OPPORTUNITIES (UPSELL) ---
+  const trafficOpportunities = useMemo(() => {
+    return clientsMetrics
+      .filter(client => client.needsTrafficAnalysis)
+      .map(client => {
+        const reasons = [];
+        
+        if (client.occupancyRate < 40) {
+          reasons.push({ severity: 'high', text: `Taxa de ocupação muito baixa (${client.occupancyRate.toFixed(1)}%).` });
+        } else if (client.occupancyRate < 60) {
+          reasons.push({ severity: 'medium', text: `Taxa de ocupação abaixo do ideal (${client.occupancyRate.toFixed(1)}%).` });
+        }
+        
+        if (client.monthlyScheduled < 80) {
+          reasons.push({ severity: 'high', text: `Volume baixo (${client.monthlyScheduled}/mês).` });
+        } else if (client.monthlyScheduled < 150) {
+          reasons.push({ severity: 'medium', text: `Volume pode crescer (${client.monthlyScheduled}/mês).` });
+        }
+        
+        if (client.growthVsLastMonth < 0) {
+          reasons.push({ severity: 'high', text: `Queda de ${Math.abs(client.growthVsLastMonth)}% vs mês anterior.` });
+        } else if (client.growthVsLastMonth < 10) {
+          reasons.push({ severity: 'medium', text: `Crescimento estagnado (+${client.growthVsLastMonth}%).` });
+        }
+        
+        if (client.accountType === 'CLINICA' && client.occupancyRate < 70) {
+          reasons.push({ severity: 'medium', text: `Clínica com baixa ocupação.` });
+        }
+        
+        const availableCapacity = client.availableSlots - client.monthlyScheduled;
+        const potentialNewAppointments = Math.max(0, Math.min(Math.floor(availableCapacity * 0.4), 60));
+        const suggestedInvestment = client.accountType === 'CLINICA' ? 1500 : 800;
+        const estimatedROI = (potentialNewAppointments * 200) / suggestedInvestment;
+        
+        return {
+          ...client,
+          reasons: reasons.slice(0, 3),
+          potentialNewAppointments,
+          suggestedInvestment,
+          estimatedROI: estimatedROI.toFixed(1)
+        };
+      })
+      .sort((a, b) => b.potentialNewAppointments - a.potentialNewAppointments)
+      .slice(0, 5);
+  }, [clientsMetrics]);
+
+  // --- INTELLIGENT INSIGHTS ---
+  const intelligentInsights = useMemo(() => {
+    const insights = [];
+    
+    if (globalMetrics && globalMetrics.growthRate > 15) {
+      insights.push({
+        icon: '📈',
+        title: 'Crescimento Acelerado Detectado',
+        description: `Seus clientes agendaram ${globalMetrics.growthRate}% mais este mês! Destaque: ${topClients[0]?.clientName} (+${topClients[0]?.growthVsLastMonth}%)`,
+        action: null
+      });
+    }
+    
+    const noAutomation = clientsMetrics.filter(c => !c.automationsActive).length;
+    if (noAutomation > 2) {
+      insights.push({
+        icon: '⚠️',
+        title: `${noAutomation} clientes não usaram automações este mês`,
+        description: 'Eles podem não saber como configurar corretamente. Considere criar um tutorial em vídeo ou oferecer onboarding personalizado.',
+        action: 'Criar Tutorial'
+      });
+    }
+    
+    const avgNoShow = clientsMetrics.length ? clientsMetrics.reduce((sum, c) => sum + c.noShowRate, 0) / clientsMetrics.length : 0;
+    if (avgNoShow > 10) {
+      insights.push({
+        icon: '🔴',
+        title: `Taxa média de "Não Veio" está em ${avgNoShow.toFixed(1)}%`,
+        description: 'Isso está acima da média ideal (8%). Considere implementar lembretes 2h antes da consulta, além do lembrete de 24h.',
+        action: 'Sugerir aos Clientes'
+      });
+    }
+    
+    if (trafficOpportunities.length > 3) {
+      const potentialRev = trafficOpportunities.reduce((sum, c) => sum + (c as any).potentialNewAppointments, 0) * 200;
+      insights.push({
+        icon: '💰',
+        title: `${trafficOpportunities.length} clientes com baixa ocupação`,
+        description: `Receita potencial estimada em R$ ${potentialRev.toLocaleString('pt-BR')} com tráfego pago.`,
+        action: 'Ver Oportunidades'
+      });
+    }
+    
+    return insights;
+  }, [globalMetrics, clientsMetrics, topClients, trafficOpportunities]);
+
+  // --- CHURN PREDICTION ---
+  const highRiskChurn = useMemo(() => {
+    return clientsMetrics
+      .filter(c => c.healthScore === 'risk')
+      .map(client => {
+        const factors = [];
+        const lastUsedDays = Math.floor((new Date().getTime() - new Date(client.lastUsed).getTime()) / (1000 * 60 * 60 * 24));
+        
+        if (lastUsedDays > 20) factors.push(`Sem uso há ${lastUsedDays} dias`);
+        if (client.monthlyScheduled < 30) factors.push(`Apenas ${client.monthlyScheduled} agendamentos/mês`);
+        if (!client.automationsActive) factors.push('Automações desativadas');
+        if (client.webhookStatus !== 'healthy') factors.push('Problemas técnicos detectados');
+        if (client.growthVsLastMonth < -20) factors.push(`Queda de ${Math.abs(client.growthVsLastMonth)}% vs mês anterior`);
+        
+        return {
+          ...client,
+          churnProbability: Math.min(85 + Math.floor(Math.random() * 15), 99),
+          churnFactors: factors
+        };
+      });
+  }, [clientsMetrics]);
+
+  const mediumRiskChurn = useMemo(() => {
+    return clientsMetrics
+      .filter(c => c.healthScore === 'attention')
+      .slice(0, 5);
+  }, [clientsMetrics]);
+
+  const totalRevenueAtRisk = useMemo(() => {
+    return highRiskChurn.reduce((sum, c) => {
+      return sum + (c.accountType === 'CLINICA' ? 400 : 150);
+    }, 0) + mediumRiskChurn.reduce((sum, c) => {
+      return sum + (c.accountType === 'CLINICA' ? 400 : 150) * 0.5;
+    }, 0);
+  }, [highRiskChurn, mediumRiskChurn]);
+
 
   // --- DADOS PARA GRÁFICOS ANALÍTICOS ---
   const monthlyGrowthData = [
@@ -194,56 +282,27 @@ const OwnerDashboard: React.FC<OwnerDashboardProps> = ({ currentUser }) => {
   const consultorioStats = useMemo(() => {
     const consultorioClients = clientsMetrics.filter(c => c.accountType === 'CONSULTORIO');
     if (consultorioClients.length === 0) return { avgMonthly: 0, noShowRate: 0, automationRate: 0, avgTicket: 0 };
-    
-    const avgMonthly = Math.round(
-      consultorioClients.reduce((sum, c) => sum + c.monthlyScheduled, 0) / consultorioClients.length
-    );
-    const noShowRate = (
-      consultorioClients.reduce((sum, c) => sum + c.noShowRate, 0) / consultorioClients.length
-    ).toFixed(1);
-    const automationRate = (
-      (consultorioClients.filter(c => c.automationsActive).length / consultorioClients.length) * 100
-    ).toFixed(1);
-    
-    return {
-      avgMonthly,
-      noShowRate,
-      automationRate,
-      avgTicket: 150 // Exemplo
-    };
+    const avgMonthly = Math.round(consultorioClients.reduce((sum, c) => sum + c.monthlyScheduled, 0) / consultorioClients.length);
+    const noShowRate = (consultorioClients.reduce((sum, c) => sum + c.noShowRate, 0) / consultorioClients.length).toFixed(1);
+    const automationRate = ((consultorioClients.filter(c => c.automationsActive).length / consultorioClients.length) * 100).toFixed(1);
+    return { avgMonthly, noShowRate, automationRate, avgTicket: 150 };
   }, [clientsMetrics]);
 
   const clinicaStats = useMemo(() => {
     const clinicaClients = clientsMetrics.filter(c => c.accountType === 'CLINICA');
     if (clinicaClients.length === 0) return { avgMonthly: 0, noShowRate: 0, automationRate: 0, avgTicket: 0 };
-    
-    const avgMonthly = Math.round(
-      clinicaClients.reduce((sum, c) => sum + c.monthlyScheduled, 0) / clinicaClients.length
-    );
-    const noShowRate = (
-      clinicaClients.reduce((sum, c) => sum + c.noShowRate, 0) / clinicaClients.length
-    ).toFixed(1);
-    const automationRate = (
-      (clinicaClients.filter(c => c.automationsActive).length / clinicaClients.length) * 100
-    ).toFixed(1);
-    
-    return {
-      avgMonthly,
-      noShowRate,
-      automationRate,
-      avgTicket: 400 // Exemplo
-    };
+    const avgMonthly = Math.round(clinicaClients.reduce((sum, c) => sum + c.monthlyScheduled, 0) / clinicaClients.length);
+    const noShowRate = (clinicaClients.reduce((sum, c) => sum + c.noShowRate, 0) / clinicaClients.length).toFixed(1);
+    const automationRate = ((clinicaClients.filter(c => c.automationsActive).length / clinicaClients.length) * 100).toFixed(1);
+    return { avgMonthly, noShowRate, automationRate, avgTicket: 400 };
   }, [clientsMetrics]);
 
-  // --- DADOS PARA MAPA DE CALOR ---
   const last30Days = useMemo(() => {
     const days = [];
     const today = new Date();
-    
     for (let i = 29; i >= 0; i--) {
       const date = new Date(today);
       date.setDate(today.getDate() - i);
-      
       const dayLabels = ['D', 'S', 'T', 'Q', 'Q', 'S', 'S'];
       days.push({
         label: dayLabels[date.getDay()],
@@ -251,24 +310,18 @@ const OwnerDashboard: React.FC<OwnerDashboardProps> = ({ currentUser }) => {
         date: date
       });
     }
-    
     return days;
   }, []);
 
   const getClientActivityForDay = (client: ClientHealthMetrics, date: Date): 'high' | 'medium' | 'low' | 'none' => {
-    // Simular atividade de forma determinística baseada no nome e data
     const seed = client.clientName.charCodeAt(0) + date.getDate() + (client.healthScore === 'healthy' ? 5 : 0);
-    
-    if (client.healthScore === 'risk') {
-      return (seed % 10) > 8 ? 'low' : 'none';
-    }
+    if (client.healthScore === 'risk') return (seed % 10) > 8 ? 'low' : 'none';
     if (client.healthScore === 'attention') {
       const val = seed % 10;
       if (val > 7) return 'medium';
       if (val > 4) return 'low';
       return 'none';
     }
-    // Healthy
     const val = seed % 10;
     if (val > 6) return 'high';
     if (val > 3) return 'medium';
@@ -276,30 +329,47 @@ const OwnerDashboard: React.FC<OwnerDashboardProps> = ({ currentUser }) => {
     return 'none';
   };
 
-  // --- TIMELINE EVENTS ---
-  const timelineEvents = [
-    { type: 'success', icon: <CheckCircle size={16} className="text-green-600" />, title: 'Clínica Saúde Total', description: 'Criou 8 novos agendamentos', time: '14:35' },
-    { type: 'info', icon: <Calendar size={16} className="text-blue-600" />, title: 'Dr. Silva', description: 'Bloqueou agenda para feriado (25/Dez)', time: '14:32' },
-    { type: 'error', icon: <AlertTriangle size={16} className="text-red-600" />, title: 'Clínica Vida', description: 'Webhook falhou (3x consecutivo)', time: '14:30' },
-    { type: 'success', icon: <Users size={16} className="text-green-600" />, title: 'Dr. Santos', description: 'Fez login (1º em 30 dias)', time: '14:28' },
-    { type: 'warning', icon: <MessageSquare size={16} className="text-yellow-600" />, title: 'Clínica Exemplo', description: 'Pediu suporte via email', time: '14:25' },
-    { type: 'info', icon: <Zap size={16} className="text-blue-600" />, title: 'Dr. Costa', description: 'Mudou configurações de automação', time: '14:20' },
-    { type: 'error', icon: <Phone size={16} className="text-red-600" />, title: 'Clínica Norte', description: 'Evolution API desconectada', time: '14:15' }
-  ];
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-screen">
+        <div className="text-center">
+          <RefreshCw size={48} className="text-blue-600 animate-spin mx-auto mb-4" />
+          <p className="text-gray-600 font-medium">Carregando dashboard...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div className="p-8 space-y-8 animate-in fade-in duration-500 max-w-[1600px] mx-auto">
+    <div className="min-h-screen bg-gray-50 p-6 animate-in fade-in duration-500">
       {/* HEADER */}
-      <header className="flex justify-between items-center mb-2">
-        <div>
-            <h2 className="text-3xl font-bold text-slate-800">Visão Global (Owner)</h2>
-            <p className="text-slate-500 mt-1">Gerencie a saúde de todas as clínicas no ecossistema.</p>
+      <div className="mb-6">
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-3xl font-bold text-gray-900 flex items-center gap-3">
+              <Building2 size={32} className="text-blue-600" />
+              Dashboard Owner
+            </h1>
+            <p className="text-gray-500 mt-1">
+              Visão global de {clientsMetrics.length} cliente(s) • Atualizado {new Date().toLocaleTimeString('pt-BR')}
+            </p>
+          </div>
+
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => calculateMetrics()}
+              className="px-4 py-2 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 flex items-center gap-2"
+            >
+              <RefreshCw size={16} />
+              Atualizar
+            </button>
+            <div className="bg-white p-2 px-3 rounded-lg border border-slate-200 shadow-sm flex items-center gap-2">
+                <span className="text-xs font-bold text-blue-600 px-2 py-1 bg-blue-50 rounded-md">ADMIN MASTER</span>
+                <span className="text-sm text-slate-600">{currentUser.name}</span>
+            </div>
+          </div>
         </div>
-        <div className="bg-white p-3 rounded-lg border border-slate-200 shadow-sm flex items-center gap-2">
-             <span className="text-xs font-bold text-blue-600 px-2 py-1 bg-blue-50 rounded-md">ADMIN MASTER</span>
-             <span className="text-sm text-slate-600">{currentUser.name}</span>
-        </div>
-      </header>
+      </div>
 
       {/* FILTROS GLOBAIS */}
       <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4 mb-6">
@@ -351,14 +421,6 @@ const OwnerDashboard: React.FC<OwnerDashboardProps> = ({ currentUser }) => {
             
             <div className="ml-auto flex items-center gap-2">
             <button
-                onClick={() => calculateMetrics()}
-                className="p-2 text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
-                title="Atualizar dados"
-            >
-                <RefreshCw size={18} />
-            </button>
-            
-            <button
                 onClick={() => setShowNotifications(!showNotifications)}
                 className="relative p-2 text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
             >
@@ -371,87 +433,81 @@ const OwnerDashboard: React.FC<OwnerDashboardProps> = ({ currentUser }) => {
         </div>
       </div>
 
-      {/* MÉTRICAS PRINCIPAIS (Cards no Topo) */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-6">
-        {/* Card 1: Clientes Ativos */}
+      {/* MÉTRICAS PRINCIPAIS */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-6">
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 hover:shadow-md transition-shadow">
             <div className="flex items-center justify-between mb-2">
             <div className="p-2 bg-blue-50 rounded-lg">
                 <Building2 size={24} className="text-blue-600" />
             </div>
-            <span className={`text-xs font-bold px-2 py-1 rounded-full ${
-                globalMetrics?.growthRate && globalMetrics.growthRate > 0 
-                ? 'bg-green-100 text-green-700' 
-                : 'bg-red-100 text-red-700'
-            }`}>
+            <span className={`text-xs font-bold px-2 py-1 rounded-full ${globalMetrics?.growthRate && globalMetrics.growthRate > 0 ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
                 {globalMetrics?.growthRate && globalMetrics.growthRate > 0 ? '+' : ''}{globalMetrics?.growthRate}%
             </span>
             </div>
-            <p className="text-3xl font-bold text-gray-900">
-            {globalMetrics?.activeClients || 0}
-            </p>
+            <p className="text-3xl font-bold text-gray-900">{globalMetrics?.activeClients || 0}</p>
             <p className="text-sm text-gray-500 mt-1">Clientes Ativos</p>
-            <p className="text-xs text-gray-400 mt-2">
-            {globalMetrics?.totalClients} total • +2 este mês
-            </p>
+            <p className="text-xs text-gray-400 mt-2">{globalMetrics?.totalClients} total • +2 este mês</p>
         </div>
         
-        {/* Card 2: Agendamentos */}
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 hover:shadow-md transition-shadow">
             <div className="flex items-center justify-between mb-2">
-            <div className="p-2 bg-green-50 rounded-lg">
-                <Calendar size={24} className="text-green-600" />
-            </div>
+            <div className="p-2 bg-green-50 rounded-lg"><Calendar size={24} className="text-green-600" /></div>
             <TrendingUp size={18} className="text-green-600" />
             </div>
-            <p className="text-3xl font-bold text-gray-900">
-            {globalMetrics?.totalAppointmentsThisMonth.toLocaleString('pt-BR') || 0}
-            </p>
+            <p className="text-3xl font-bold text-gray-900">{globalMetrics?.totalAppointmentsThisMonth.toLocaleString('pt-BR') || 0}</p>
             <p className="text-sm text-gray-500 mt-1">Agendamentos/Mês</p>
-            <p className="text-xs text-gray-400 mt-2">
-            +23% vs mês anterior
-            </p>
+            <p className="text-xs text-gray-400 mt-2">+23% vs mês anterior</p>
         </div>
         
-        {/* Card 3: Automações */}
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 hover:shadow-md transition-shadow">
             <div className="flex items-center justify-between mb-2">
-            <div className="p-2 bg-purple-50 rounded-lg">
-                <Zap size={24} className="text-purple-600" />
+            <div className="p-2 bg-purple-50 rounded-lg"><Zap size={24} className="text-purple-600" /></div>
+            <span className="text-xs font-bold px-2 py-1 rounded-full bg-purple-100 text-purple-700">{globalMetrics?.automationSuccessRate}%</span>
             </div>
-            <span className="text-xs font-bold px-2 py-1 rounded-full bg-purple-100 text-purple-700">
-                {globalMetrics?.automationSuccessRate}%
-            </span>
-            </div>
-            <p className="text-3xl font-bold text-gray-900">
-            {globalMetrics?.totalAutomationsSent.toLocaleString('pt-BR') || 0}
-            </p>
+            <p className="text-3xl font-bold text-gray-900">{globalMetrics?.totalAutomationsSent.toLocaleString('pt-BR') || 0}</p>
             <p className="text-sm text-gray-500 mt-1">Automações Enviadas</p>
-            <p className="text-xs text-gray-400 mt-2">
-            N8N + Evolution API
-            </p>
+            <p className="text-xs text-gray-400 mt-2">N8N + Evolution API</p>
         </div>
         
-        {/* Card 4: MRR */}
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 hover:shadow-md transition-shadow">
             <div className="flex items-center justify-between mb-2">
-            <div className="p-2 bg-orange-50 rounded-lg">
-                <DollarSign size={24} className="text-orange-600" />
-            </div>
+            <div className="p-2 bg-orange-50 rounded-lg"><DollarSign size={24} className="text-orange-600" /></div>
             <ArrowUp size={18} className="text-green-600" />
             </div>
-            <p className="text-3xl font-bold text-gray-900">
-            R$ {globalMetrics?.mrr.toLocaleString('pt-BR') || 0}
-            </p>
+            <p className="text-3xl font-bold text-gray-900">R$ {globalMetrics?.mrr.toLocaleString('pt-BR') || 0}</p>
             <p className="text-sm text-gray-500 mt-1">MRR (Receita Recorrente)</p>
-            <p className="text-xs text-gray-400 mt-2">
-            +15% vs mês anterior
-            </p>
+            <p className="text-xs text-gray-400 mt-2">+15% vs mês anterior</p>
         </div>
+      </div>
+
+      {/* INSIGHTS INTELIGENTES */}
+      <div className="bg-gradient-to-br from-indigo-500 to-purple-600 rounded-xl p-6 mb-6 text-white shadow-lg shadow-indigo-200">
+        <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
+          <Zap size={20} className="text-yellow-300" />
+          Insights Inteligentes
+        </h3>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {intelligentInsights.map((insight, idx) => (
+            <div key={idx} className="bg-white/10 backdrop-blur-sm rounded-lg p-4 border border-white/20 hover:bg-white/20 transition-colors">
+              <div className="flex items-start gap-3">
+                <div className="text-2xl">{insight.icon}</div>
+                <div className="flex-1">
+                  <h4 className="font-bold mb-1 text-white">{insight.title}</h4>
+                  <p className="text-sm text-white/90 leading-relaxed">{insight.description}</p>
+                  {insight.action && (
+                    <button className="mt-3 px-4 py-2 bg-white text-indigo-600 rounded-lg text-sm font-bold hover:bg-indigo-50 transition-colors shadow-sm">
+                      {insight.action}
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+          ))}
         </div>
+      </div>
 
       {/* VISÃO GERAL DOS CLIENTES */}
-        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 mb-6">
+      <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 mb-6">
         <div className="flex items-center justify-between mb-6">
             <div>
             <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2">
@@ -463,7 +519,6 @@ const OwnerDashboard: React.FC<OwnerDashboardProps> = ({ currentUser }) => {
             </p>
             </div>
             
-            {/* Dropdown de Visualização */}
             <div className="flex items-center gap-2">
             <span className="text-sm text-gray-600">Visualizar por:</span>
             <div className="relative">
@@ -481,7 +536,6 @@ const OwnerDashboard: React.FC<OwnerDashboardProps> = ({ currentUser }) => {
             </div>
         </div>
         
-        {/* Tabela com Scroll */}
         <div className="overflow-x-auto">
             <table className="w-full">
             <thead>
@@ -524,7 +578,6 @@ const OwnerDashboard: React.FC<OwnerDashboardProps> = ({ currentUser }) => {
                 )}
                 </tr>
             </thead>
-            
             <tbody>
                 {filteredClients.map((client) => (
                 <tr key={client.clientId} className="border-b border-gray-100 hover:bg-gray-50 transition-colors">
@@ -537,113 +590,50 @@ const OwnerDashboard: React.FC<OwnerDashboardProps> = ({ currentUser }) => {
                         </div>
                         </td>
                         <td className="py-3 px-4">
-                        <span className={`text-xs px-2 py-1 rounded-full font-bold ${
-                            client.accountType === 'CLINICA' 
-                            ? 'bg-purple-50 text-purple-700' 
-                            : 'bg-blue-50 text-blue-700'
-                        }`}>
+                        <span className={`text-xs px-2 py-1 rounded-full font-bold ${client.accountType === 'CLINICA' ? 'bg-purple-50 text-purple-700' : 'bg-blue-50 text-blue-700'}`}>
                             {client.accountType}
                         </span>
                         </td>
-                        <td className="py-3 px-4 text-sm text-gray-600">
-                        {formatRelativeDate(client.lastUsed)}
-                        </td>
-                        <td className="py-3 px-4 text-right text-sm font-bold text-gray-900">
-                        {client.appointmentsThisMonth}
+                        <td className="py-3 px-4 text-sm text-gray-600">{formatRelativeDate(client.lastUsed)}</td>
+                        <td className="py-3 px-4 text-right text-sm font-bold text-gray-900">{client.appointmentsThisMonth}</td>
+                        <td className="py-3 px-4 text-center">
+                        {client.automationsActive ? <CheckCircle size={18} className="text-green-500 inline" /> : <AlertTriangle size={18} className="text-red-500 inline" />}
                         </td>
                         <td className="py-3 px-4 text-center">
-                        {client.automationsActive ? (
-                            <CheckCircle size={18} className="text-green-500 inline" />
-                        ) : (
-                            <AlertTriangle size={18} className="text-red-500 inline" />
-                        )}
-                        </td>
-                        <td className="py-3 px-4 text-center">
-                        {client.healthScore === 'healthy' && (
-                            <span className="inline-flex items-center gap-1 text-xs font-bold bg-green-50 text-green-700 px-2 py-1 rounded-full">
-                            🟢 Saudável
-                            </span>
-                        )}
-                        {client.healthScore === 'attention' && (
-                            <span className="inline-flex items-center gap-1 text-xs font-bold bg-yellow-50 text-yellow-700 px-2 py-1 rounded-full">
-                            🟡 Atenção
-                            </span>
-                        )}
-                        {client.healthScore === 'risk' && (
-                            <span className="inline-flex items-center gap-1 text-xs font-bold bg-red-50 text-red-700 px-2 py-1 rounded-full">
-                            🔴 Risco
-                            </span>
-                        )}
+                        {client.healthScore === 'healthy' && <span className="inline-flex items-center gap-1 text-xs font-bold bg-green-50 text-green-700 px-2 py-1 rounded-full">🟢 Saudável</span>}
+                        {client.healthScore === 'attention' && <span className="inline-flex items-center gap-1 text-xs font-bold bg-yellow-50 text-yellow-700 px-2 py-1 rounded-full">🟡 Atenção</span>}
+                        {client.healthScore === 'risk' && <span className="inline-flex items-center gap-1 text-xs font-bold bg-red-50 text-red-700 px-2 py-1 rounded-full">🔴 Risco</span>}
                         </td>
                         <td className="py-3 px-4 text-right">
-                        {client.healthScore !== 'healthy' && (
-                            <button className="text-xs text-blue-600 hover:text-blue-800 font-medium">
-                            Contatar
-                            </button>
-                        )}
+                        {client.healthScore !== 'healthy' && <button className="text-xs text-blue-600 hover:text-blue-800 font-medium">Contatar</button>}
                         </td>
                     </>
                     )}
                     
                     {clientView === 'weekly' && (
                     <>
-                        <td className="py-3 px-4">
-                        <p className="font-semibold text-gray-900 text-sm">{client.clientName}</p>
-                        </td>
-                        <td className="py-3 px-4">
-                        <span className="text-xs px-2 py-1 rounded-full font-bold bg-gray-100 text-gray-700">
-                            {client.accountType}
-                        </span>
-                        </td>
+                        <td className="py-3 px-4"><p className="font-semibold text-gray-900 text-sm">{client.clientName}</p></td>
+                        <td className="py-3 px-4"><span className="text-xs px-2 py-1 rounded-full font-bold bg-gray-100 text-gray-700">{client.accountType}</span></td>
                         <td className="py-3 px-4 text-right text-sm text-gray-700">{client.weeklyContacts}</td>
                         <td className="py-3 px-4 text-right text-sm font-bold text-blue-600">{client.weeklyScheduled}</td>
                         <td className="py-3 px-4 text-right text-sm text-green-600">{client.weeklyAttended}</td>
                         <td className="py-3 px-4 text-right text-sm text-red-600">{client.weeklyCancelled}</td>
-                        <td className="py-3 px-4 text-right">
-                        <span className="text-sm font-bold text-gray-900">
-                            {client.weeklyScheduled > 0 ? ((client.weeklyAttended / client.weeklyScheduled) * 100).toFixed(1) : 0}%
-                        </span>
-                        </td>
+                        <td className="py-3 px-4 text-right"><span className="text-sm font-bold text-gray-900">{client.weeklyScheduled > 0 ? ((client.weeklyAttended / client.weeklyScheduled) * 100).toFixed(1) : 0}%</span></td>
                     </>
                     )}
                     
                     {clientView === 'monthly' && (
                     <>
-                        <td className="py-3 px-4">
-                        <p className="font-semibold text-gray-900 text-sm">{client.clientName}</p>
-                        </td>
-                        <td className="py-3 px-4">
-                        <span className="text-xs px-2 py-1 rounded-full font-bold bg-gray-100 text-gray-700">
-                            {client.accountType}
-                        </span>
-                        </td>
+                        <td className="py-3 px-4"><p className="font-semibold text-gray-900 text-sm">{client.clientName}</p></td>
+                        <td className="py-3 px-4"><span className="text-xs px-2 py-1 rounded-full font-bold bg-gray-100 text-gray-700">{client.accountType}</span></td>
                         <td className="py-3 px-4 text-right text-sm text-gray-700">{client.monthlyContacts}</td>
                         <td className="py-3 px-4 text-right text-sm font-bold text-blue-600">{client.monthlyScheduled}</td>
                         <td className="py-3 px-4 text-right text-sm text-green-600">{client.monthlyAttended}</td>
                         <td className="py-3 px-4 text-right text-sm text-red-600">{client.monthlyCancelled}</td>
-                        <td className="py-3 px-4 text-right">
-                        <span className="text-sm font-bold text-gray-900">
-                            {client.monthlyScheduled > 0 ? ((client.monthlyAttended / client.monthlyScheduled) * 100).toFixed(1) : 0}%
-                        </span>
-                        </td>
+                        <td className="py-3 px-4 text-right"><span className="text-sm font-bold text-gray-900">{client.monthlyScheduled > 0 ? ((client.monthlyAttended / client.monthlyScheduled) * 100).toFixed(1) : 0}%</span></td>
                         <td className="py-3 px-4 text-right">
                         <div className="flex items-center justify-end gap-1">
-                            {client.growthVsLastMonth > 0 ? (
-                            <>
-                                <ArrowUp size={14} className="text-green-600" />
-                                <span className="text-xs font-bold text-green-600">+{client.growthVsLastMonth}%</span>
-                            </>
-                            ) : client.growthVsLastMonth < 0 ? (
-                            <>
-                                <ArrowDown size={14} className="text-red-600" />
-                                <span className="text-xs font-bold text-red-600">{client.growthVsLastMonth}%</span>
-                            </>
-                            ) : (
-                            <>
-                                <Minus size={14} className="text-gray-400" />
-                                <span className="text-xs text-gray-500">0%</span>
-                            </>
-                            )}
+                            {client.growthVsLastMonth > 0 ? <><ArrowUp size={14} className="text-green-600" /><span className="text-xs font-bold text-green-600">+{client.growthVsLastMonth}%</span></> : client.growthVsLastMonth < 0 ? <><ArrowDown size={14} className="text-red-600" /><span className="text-xs font-bold text-red-600">{client.growthVsLastMonth}%</span></> : <><Minus size={14} className="text-gray-400" /><span className="text-xs text-gray-500">0%</span></>}
                         </div>
                         </td>
                     </>
@@ -660,495 +650,251 @@ const OwnerDashboard: React.FC<OwnerDashboardProps> = ({ currentUser }) => {
             <p>Nenhum cliente encontrado com os filtros aplicados.</p>
             </div>
         )}
-        </div>
+      </div>
 
-      {/* ALERTAS E PROBLEMAS */}
+      {/* ANÁLISE DE UPSELL - TRÁFEGO PAGO */}
       <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 mb-6">
-        <div className="flex items-center justify-between mb-6">
-            <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2">
-            <AlertTriangle size={20} className="text-orange-600" />
-            Alertas e Problemas
-            </h3>
-            <span className="text-xs bg-orange-100 text-orange-700 px-3 py-1 rounded-full font-bold">
-            {alertsList.length} REQUEREM ATENÇÃO
-            </span>
+        <h3 className="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2">
+          <Target size={20} className="text-orange-600" />
+          Oportunidades de Tráfego Pago
+        </h3>
+        <p className="text-sm text-gray-600 mb-6">Análise de clientes que poderiam se beneficiar de campanhas de tráfego pago para aumentar agendamentos.</p>
+        <div className="space-y-4">
+          {trafficOpportunities.map((client) => (
+            <div key={client.clientId} className="border border-orange-100 rounded-lg p-4 bg-gradient-to-r from-orange-50 to-white">
+              <div className="flex items-start justify-between mb-3">
+                <div className="flex-1">
+                  <h4 className="font-bold text-gray-900 flex items-center gap-2">
+                    {client.clientName}
+                    <span className="text-xs bg-orange-100 text-orange-700 px-2 py-0.5 rounded-full font-bold">{client.accountType}</span>
+                  </h4>
+                  <p className="text-sm text-gray-600 mt-1">Taxa de ocupação: <strong>{client.occupancyRate.toFixed(1)}%</strong></p>
+                </div>
+                <div className="text-right">
+                  <p className="text-xs text-gray-500">Potencial mensal</p>
+                  <p className="text-lg font-bold text-orange-600">+{client.potentialNewAppointments} agend.</p>
+                </div>
+              </div>
+              <div className="space-y-2 mb-3">
+                <p className="text-xs font-bold text-gray-500 uppercase">Por que indicar tráfego pago:</p>
+                {(client as any).reasons.map((reason: any, i: number) => (
+                  <div key={i} className="flex items-start gap-2 text-sm">
+                    <div className={`mt-0.5 w-2 h-2 rounded-full flex-shrink-0 ${reason.severity === 'high' ? 'bg-red-500' : reason.severity === 'medium' ? 'bg-yellow-500' : 'bg-blue-500'}`}></div>
+                    <p className="text-gray-700 flex-1">{reason.text}</p>
+                  </div>
+                ))}
+              </div>
+              <div className="grid grid-cols-3 gap-3 bg-white rounded-lg p-3 border border-orange-100">
+                <div><p className="text-xs text-gray-500">Investimento sugerido</p><p className="text-sm font-bold text-gray-900">R$ {(client as any).suggestedInvestment}/mês</p></div>
+                <div><p className="text-xs text-gray-500">Novos agendamentos</p><p className="text-sm font-bold text-green-600">+{(client as any).potentialNewAppointments}</p></div>
+                <div><p className="text-xs text-gray-500">ROI estimado</p><p className="text-sm font-bold text-orange-600">{(client as any).estimatedROI}x</p></div>
+              </div>
+              <div className="flex gap-2 mt-3">
+                <button className="flex-1 px-4 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 text-sm font-medium transition-colors">Enviar Proposta</button>
+                <button className="px-4 py-2 border border-orange-200 text-orange-700 rounded-lg hover:bg-orange-50 text-sm font-medium transition-colors">Ver Detalhes</button>
+              </div>
+            </div>
+          ))}
         </div>
-        
-        {alertsList.length === 0 ? (
-            <div className="text-center py-12">
-            <CheckCircle size={48} className="text-green-500 mx-auto mb-3" />
-            <p className="text-gray-600 font-medium">Tudo funcionando perfeitamente!</p>
-            <p className="text-sm text-gray-400 mt-1">Nenhum alerta no momento.</p>
-            </div>
-        ) : (
-            <div className="space-y-3">
-            {alertsList.map((alert, idx) => (
-                <div 
-                key={idx}
-                className={`p-4 rounded-lg border-l-4 ${
-                    alert.severity === 'critical' ? 'bg-red-50 border-red-500' :
-                    alert.severity === 'warning' ? 'bg-yellow-50 border-yellow-500' :
-                    'bg-blue-50 border-blue-500'
-                }`}
-                >
-                <div className="flex items-start justify-between">
-                    <div className="flex-1">
-                    <div className="flex items-center gap-2 mb-1">
-                        {alert.severity === 'critical' && <span className="text-lg">🔴</span>}
-                        {alert.severity === 'warning' && <span className="text-lg">🟡</span>}
-                        {alert.severity === 'info' && <span className="text-lg">🔵</span>}
-                        <h4 className="font-bold text-gray-900 text-sm">{alert.title}</h4>
-                    </div>
-                    <p className="text-sm text-gray-700 mb-2">{alert.description}</p>
-                    <p className="text-xs text-gray-500">{alert.timestamp}</p>
-                    </div>
-                    <div className="flex gap-2 ml-4">
-                    <button className="px-3 py-1.5 text-xs bg-white border border-gray-200 rounded-lg hover:bg-gray-50 font-medium">
-                        Ver Logs
-                    </button>
-                    <button className="px-3 py-1.5 text-xs bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium">
-                        {alert.action}
-                    </button>
-                    </div>
-                </div>
-                </div>
-            ))}
-            </div>
+        {trafficOpportunities.length === 0 && (
+          <div className="text-center py-12 text-gray-400">
+            <Target size={48} className="mx-auto mb-3 opacity-50" />
+            <p>Nenhuma oportunidade identificada no momento.</p>
+          </div>
         )}
       </div>
 
+      {/* PREVISÃO DE CHURN */}
+      <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 mb-6">
+        <h3 className="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2">
+          <AlertTriangle size={20} className="text-red-600" />
+          Previsão de Churn (Próximos 30 dias)
+        </h3>
+        
+        {highRiskChurn.length > 0 && (
+          <div className="mb-4">
+            <div className="flex items-center gap-2 mb-3">
+              <div className="w-3 h-3 bg-red-500 rounded-full"></div>
+              <h4 className="font-bold text-red-800 text-sm uppercase">
+                Alto Risco ({highRiskChurn.length} cliente{highRiskChurn.length !== 1 ? 's' : ''})
+              </h4>
+            </div>
+            <div className="space-y-3">
+              {highRiskChurn.map(client => (
+                <div key={client.clientId} className="p-4 bg-red-50 border border-red-200 rounded-lg">
+                  <div className="flex items-start justify-between mb-2">
+                    <div className="flex-1">
+                      <h5 className="font-bold text-gray-900">{client.clientName}</h5>
+                      <p className="text-sm text-red-700 font-medium">Probabilidade de churn: <strong>{(client as any).churnProbability}%</strong></p>
+                    </div>
+                    <span className="text-xs bg-red-100 text-red-700 px-2 py-1 rounded-full font-bold">{client.accountType}</span>
+                  </div>
+                  <div className="space-y-1 mb-3">
+                    <p className="text-xs text-gray-600"><strong>Fatores de risco:</strong></p>
+                    {(client as any).churnFactors.map((factor: string, i: number) => (
+                      <p key={i} className="text-xs text-gray-700 ml-3">• {factor}</p>
+                    ))}
+                  </div>
+                  <div className="flex gap-2">
+                    <button className="flex-1 px-3 py-2 bg-red-600 text-white rounded-lg text-sm font-medium hover:bg-red-700">Ligar Hoje</button>
+                    <button className="px-3 py-2 border border-red-300 text-red-700 rounded-lg text-sm font-medium hover:bg-red-50">Enviar Email</button>
+                  </div>
+                  <p className="text-xs text-red-600 mt-2">💰 Receita em risco: R$ {client.accountType === 'CLINICA' ? '400' : '150'}/mês</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+        
+        {mediumRiskChurn.length > 0 && (
+          <div>
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2">
+                <div className="w-3 h-3 bg-yellow-500 rounded-full"></div>
+                <h4 className="font-bold text-yellow-800 text-sm uppercase">Médio Risco ({mediumRiskChurn.length} cliente{mediumRiskChurn.length !== 1 ? 's' : ''})</h4>
+              </div>
+              <button className="text-xs text-blue-600 hover:text-blue-800 font-medium">Ver lista completa</button>
+            </div>
+            <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+              <p className="text-sm text-yellow-800">{mediumRiskChurn.map(c => c.clientName).join(', ')}</p>
+            </div>
+          </div>
+        )}
+        
+        <div className="mt-4 pt-4 border-t border-gray-200 bg-gradient-to-r from-red-50 to-yellow-50 -mx-6 -mb-6 px-6 py-4 rounded-b-xl">
+          <div className="flex items-center justify-between">
+            <p className="text-sm font-medium text-gray-700">💰 Receita total em risco:</p>
+            <p className="text-xl font-bold text-red-600">R$ {totalRevenueAtRisk.toLocaleString('pt-BR')}/mês</p>
+          </div>
+        </div>
+      </div>
+
       {/* RANKINGS */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
-        {/* Top 5 Clientes */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-            <h3 className="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2">
-            <Award size={20} className="text-yellow-600" />
-            TOP 5 Clientes (Por Volume)
-            </h3>
-            
+            <h3 className="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2"><Award size={20} className="text-yellow-600" />TOP 5 Clientes (Por Volume)</h3>
             <div className="space-y-3">
             {topClients.map((client, idx) => (
                 <div key={client.clientId} className="flex items-center gap-3 p-3 rounded-lg hover:bg-gray-50 transition-colors">
-                <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm ${
-                    idx === 0 ? 'bg-yellow-100 text-yellow-700' :
-                    idx === 1 ? 'bg-gray-200 text-gray-700' :
-                    idx === 2 ? 'bg-orange-100 text-orange-700' :
-                    'bg-blue-50 text-blue-600'
-                }`}>
-                    {idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : idx + 1}
-                </div>
-                
-                <div className="flex-1">
-                    <p className="font-semibold text-gray-900 text-sm">{client.clientName}</p>
-                    <p className="text-xs text-gray-500">
-                    {client.appointmentsThisMonth} agendamentos/mês
-                    </p>
-                </div>
-                
-                <div className="text-right">
-                    <div className="flex items-center gap-1 text-green-600">
-                    <TrendingUp size={14} />
-                    <span className="text-xs font-bold">+{client.growthVsLastMonth}%</span>
-                    </div>
-                </div>
+                <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm ${idx === 0 ? 'bg-yellow-100 text-yellow-700' : idx === 1 ? 'bg-gray-200 text-gray-700' : idx === 2 ? 'bg-orange-100 text-orange-700' : 'bg-blue-50 text-blue-600'}`}>{idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : idx + 1}</div>
+                <div className="flex-1"><p className="font-semibold text-gray-900 text-sm">{client.clientName}</p><p className="text-xs text-gray-500">{client.appointmentsThisMonth} agendamentos/mês</p></div>
+                <div className="text-right"><div className="flex items-center gap-1 text-green-600"><TrendingUp size={14} /><span className="text-xs font-bold">+{client.growthVsLastMonth}%</span></div></div>
                 </div>
             ))}
             </div>
         </div>
-        
-        {/* Bottom 5 - Precisam de Atenção */}
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-            <h3 className="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2">
-            <Target size={20} className="text-red-600" />
-            Clientes que Precisam de Atenção
-            </h3>
-            
+            <h3 className="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2"><Target size={20} className="text-red-600" />Clientes que Precisam de Atenção</h3>
             <div className="space-y-3">
-            {bottomClients.map((client, idx) => (
+            {bottomClients.map((client) => (
                 <div key={client.clientId} className="flex items-center gap-3 p-3 rounded-lg bg-red-50 border border-red-100">
-                <div className="w-8 h-8 rounded-full bg-red-100 flex items-center justify-center">
-                    <AlertTriangle size={16} className="text-red-600" />
-                </div>
-                
-                <div className="flex-1">
-                    <p className="font-semibold text-gray-900 text-sm">{client.clientName}</p>
-                    <p className="text-xs text-red-600">
-                    {client.appointmentsThisMonth} agendamentos/mês ({client.growthVsLastMonth}%)
-                    </p>
-                </div>
-                
-                <button className="px-3 py-1.5 text-xs bg-red-600 text-white rounded-lg hover:bg-red-700 font-medium">
-                    Contatar
-                </button>
+                <div className="w-8 h-8 rounded-full bg-red-100 flex items-center justify-center"><AlertTriangle size={16} className="text-red-600" /></div>
+                <div className="flex-1"><p className="font-semibold text-gray-900 text-sm">{client.clientName}</p><p className="text-xs text-red-600">{client.appointmentsThisMonth} agendamentos/mês ({client.growthVsLastMonth}%)</p></div>
+                <button className="px-3 py-1.5 text-xs bg-red-600 text-white rounded-lg hover:bg-red-700 font-medium">Contatar</button>
                 </div>
             ))}
             </div>
         </div>
-        </div>
+      </div>
 
-        {/* GRÁFICOS ANALÍTICOS */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
-            {/* Gráfico 1: Crescimento de Agendamentos */}
+      {/* GRÁFICOS E MAPA DE CALOR */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
             <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-                <h4 className="font-bold text-gray-800 mb-4 flex items-center gap-2">
-                <TrendingUp size={18} className="text-green-600" />
-                Crescimento Mensal
-                </h4>
-                
+                <h4 className="font-bold text-gray-800 mb-4 flex items-center gap-2"><TrendingUp size={18} className="text-green-600" />Crescimento Mensal</h4>
                 <div className="space-y-2">
                 {monthlyGrowthData.map((month, idx) => (
                     <div key={idx} className="flex items-center gap-2">
                     <span className="text-xs text-gray-500 w-12">{month.label}</span>
-                    <div className="flex-1 bg-gray-100 rounded-full h-6 overflow-hidden">
-                        <div 
-                        className="bg-gradient-to-r from-blue-500 to-green-500 h-full flex items-center justify-end pr-2"
-                        style={{ width: `${(month.value / 2000) * 100}%` }}
-                        >
-                        <span className="text-xs font-bold text-white">{month.value}</span>
-                        </div>
-                    </div>
+                    <div className="flex-1 bg-gray-100 rounded-full h-6 overflow-hidden"><div className="bg-gradient-to-r from-blue-500 to-green-500 h-full flex items-center justify-end pr-2" style={{ width: `${(month.value / 2000) * 100}%` }}><span className="text-xs font-bold text-white">{month.value}</span></div></div>
                     </div>
                 ))}
                 </div>
-                
-                <div className="mt-4 pt-4 border-t border-gray-100">
-                <p className="text-xs text-gray-500">Crescimento acumulado</p>
-                <p className="text-2xl font-bold text-green-600">+23.4%</p>
-                </div>
+                <div className="mt-4 pt-4 border-t border-gray-100"><p className="text-xs text-gray-500">Crescimento acumulado</p><p className="text-2xl font-bold text-green-600">+23.4%</p></div>
             </div>
             
-            {/* Gráfico 2: Distribuição por Tipo */}
             <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-                <h4 className="font-bold text-gray-800 mb-4 flex items-center gap-2">
-                <Building2 size={18} className="text-purple-600" />
-                Tipos de Conta
-                </h4>
-                
-                <div className="flex items-center justify-center mb-4">
-                <div className="relative w-40 h-40">
-                    {/* Donut Chart Simulado */}
-                    <svg viewBox="0 0 100 100" className="transform -rotate-90">
-                    <circle
-                        cx="50"
-                        cy="50"
-                        r="40"
-                        fill="none"
-                        stroke="#e5e7eb"
-                        strokeWidth="20"
-                    />
-                    <circle
-                        cx="50"
-                        cy="50"
-                        r="40"
-                        fill="none"
-                        stroke="#8b5cf6"
-                        strokeWidth="20"
-                        strokeDasharray={`${consultorioPercentage * 2.51} 251`}
-                        strokeLinecap="round"
-                    />
-                    <circle
-                        cx="50"
-                        cy="50"
-                        r="40"
-                        fill="none"
-                        stroke="#3b82f6"
-                        strokeWidth="20"
-                        strokeDasharray={`${clinicaPercentage * 2.51} 251`}
-                        strokeDashoffset={`-${consultorioPercentage * 2.51}`}
-                        strokeLinecap="round"
-                    />
-                    </svg>
-                    <div className="absolute inset-0 flex items-center justify-center">
-                    <div className="text-center">
-                        <p className="text-2xl font-bold text-gray-900">{clientsMetrics.length}</p>
-                        <p className="text-xs text-gray-500">Total</p>
-                    </div>
-                    </div>
-                </div>
-                </div>
-                
+                <h4 className="font-bold text-gray-800 mb-4 flex items-center gap-2"><Building2 size={18} className="text-purple-600" />Tipos de Conta</h4>
+                <div className="flex items-center justify-center mb-4"><div className="relative w-40 h-40"><svg viewBox="0 0 100 100" className="transform -rotate-90"><circle cx="50" cy="50" r="40" fill="none" stroke="#e5e7eb" strokeWidth="20"/><circle cx="50" cy="50" r="40" fill="none" stroke="#8b5cf6" strokeWidth="20" strokeDasharray={`${consultorioPercentage * 2.51} 251`} strokeLinecap="round"/><circle cx="50" cy="50" r="40" fill="none" stroke="#3b82f6" strokeWidth="20" strokeDasharray={`${clinicaPercentage * 2.51} 251`} strokeDashoffset={`-${consultorioPercentage * 2.51}`} strokeLinecap="round"/></svg><div className="absolute inset-0 flex items-center justify-center"><div className="text-center"><p className="text-2xl font-bold text-gray-900">{clientsMetrics.length}</p><p className="text-xs text-gray-500">Total</p></div></div></div></div>
                 <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                    <div className="w-3 h-3 rounded-full bg-purple-500"></div>
-                    <span className="text-sm text-gray-700">Consultório</span>
-                    </div>
-                    <span className="font-bold text-gray-900">{consultorioCount} ({consultorioPercentage}%)</span>
-                </div>
-                <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                    <div className="w-3 h-3 rounded-full bg-blue-500"></div>
-                    <span className="text-sm text-gray-700">Clínica</span>
-                    </div>
-                    <span className="font-bold text-gray-900">{clinicaCount} ({clinicaPercentage}%)</span>
-                </div>
+                <div className="flex items-center justify-between"><div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-purple-500"></div><span className="text-sm text-gray-700">Consultório</span></div><span className="font-bold text-gray-900">{consultorioCount} ({consultorioPercentage}%)</span></div>
+                <div className="flex items-center justify-between"><div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-blue-500"></div><span className="text-sm text-gray-700">Clínica</span></div><span className="font-bold text-gray-900">{clinicaCount} ({clinicaPercentage}%)</span></div>
                 </div>
             </div>
             
-            {/* Gráfico 3: Taxa de Automação */}
             <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-                <div className="flex items-center justify-between mb-4">
-                  <h4 className="font-bold text-gray-800 flex items-center gap-2">
-                    <Zap size={18} className="text-yellow-600" />
-                    Automações
-                  </h4>
-                  <div className="relative">
-                    <select
-                        value={automationPeriod}
-                        onChange={(e) => setAutomationPeriod(e.target.value as '7d' | '30d')}
-                        className="appearance-none pl-2 pr-6 py-1 bg-gray-50 border border-gray-200 rounded-lg text-xs font-bold text-gray-600 outline-none focus:ring-2 focus:ring-yellow-500/20 cursor-pointer"
-                    >
-                        <option value="7d">7 dias</option>
-                        <option value="30d">30 dias</option>
-                    </select>
-                    <ChevronDown size={12} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
-                  </div>
-                </div>
-                
+                <div className="flex items-center justify-between mb-4"><h4 className="font-bold text-gray-800 flex items-center gap-2"><Zap size={18} className="text-yellow-600" />Automações</h4><div className="relative"><select value={automationPeriod} onChange={(e) => setAutomationPeriod(e.target.value as '7d' | '30d')} className="appearance-none pl-2 pr-6 py-1 bg-gray-50 border border-gray-200 rounded-lg text-xs font-bold text-gray-600 outline-none focus:ring-2 focus:ring-yellow-500/20 cursor-pointer"><option value="7d">7 dias</option><option value="30d">30 dias</option></select><ChevronDown size={12} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" /></div></div>
                 <div className="space-y-4">
-                <div>
-                    <div className="flex items-center justify-between mb-2">
-                    <span className="text-xs text-gray-600">Confirmações</span>
-                    <span className="text-xs font-bold text-gray-900">{currentAutoStats.confirmations.count}</span>
-                    </div>
-                    <div className="bg-gray-100 rounded-full h-2 overflow-hidden">
-                    <div className="bg-green-500 h-full" style={{ width: `${currentAutoStats.confirmations.rate}%` }}></div>
-                    </div>
-                    <span className="text-xs text-green-600 font-medium">{currentAutoStats.confirmations.rate}% entregue</span>
-                </div>
-                
-                <div>
-                    <div className="flex items-center justify-between mb-2">
-                    <span className="text-xs text-gray-600">Lembretes 24h</span>
-                    <span className="text-xs font-bold text-gray-900">{currentAutoStats.reminders.count}</span>
-                    </div>
-                    <div className="bg-gray-100 rounded-full h-2 overflow-hidden">
-                    <div className="bg-blue-500 h-full" style={{ width: `${currentAutoStats.reminders.rate}%` }}></div>
-                    </div>
-                    <span className="text-xs text-blue-600 font-medium">{currentAutoStats.reminders.rate}% entregue</span>
-                </div>
-                
-                <div>
-                    <div className="flex items-center justify-between mb-2">
-                    <span className="text-xs text-gray-600">Recuperação</span>
-                    <span className="text-xs font-bold text-gray-900">{currentAutoStats.recovery.count}</span>
-                    </div>
-                    <div className="bg-gray-100 rounded-full h-2 overflow-hidden">
-                    <div className="bg-orange-500 h-full" style={{ width: `${currentAutoStats.recovery.rate}%` }}></div>
-                    </div>
-                    <span className="text-xs text-orange-600 font-medium">{currentAutoStats.recovery.rate}% reagendou</span>
-                </div>
-                
-                <div>
-                    <div className="flex items-center justify-between mb-2">
-                    <span className="text-xs text-gray-600">Reviews</span>
-                    <span className="text-xs font-bold text-gray-900">{currentAutoStats.reviews.count}</span>
-                    </div>
-                    <div className="bg-gray-100 rounded-full h-2 overflow-hidden">
-                    <div className="bg-purple-500 h-full" style={{ width: `${currentAutoStats.reviews.rate}%` }}></div>
-                    </div>
-                    <span className="text-xs text-purple-600 font-medium">{currentAutoStats.reviews.rate}% respondeu</span>
-                </div>
+                <div><div className="flex items-center justify-between mb-2"><span className="text-xs text-gray-600">Confirmações</span><span className="text-xs font-bold text-gray-900">{currentAutoStats.confirmations.count}</span></div><div className="bg-gray-100 rounded-full h-2 overflow-hidden"><div className="bg-green-500 h-full" style={{ width: `${currentAutoStats.confirmations.rate}%` }}></div></div><span className="text-xs text-green-600 font-medium">{currentAutoStats.confirmations.rate}% entregue</span></div>
+                <div><div className="flex items-center justify-between mb-2"><span className="text-xs text-gray-600">Lembretes 24h</span><span className="text-xs font-bold text-gray-900">{currentAutoStats.reminders.count}</span></div><div className="bg-gray-100 rounded-full h-2 overflow-hidden"><div className="bg-blue-500 h-full" style={{ width: `${currentAutoStats.reminders.rate}%` }}></div></div><span className="text-xs text-blue-600 font-medium">{currentAutoStats.reminders.rate}% entregue</span></div>
+                <div><div className="flex items-center justify-between mb-2"><span className="text-xs text-gray-600">Recuperação</span><span className="text-xs font-bold text-gray-900">{currentAutoStats.recovery.count}</span></div><div className="bg-gray-100 rounded-full h-2 overflow-hidden"><div className="bg-orange-500 h-full" style={{ width: `${currentAutoStats.recovery.rate}%` }}></div></div><span className="text-xs text-orange-600 font-medium">{currentAutoStats.recovery.rate}% reagendou</span></div>
+                <div><div className="flex items-center justify-between mb-2"><span className="text-xs text-gray-600">Reviews</span><span className="text-xs font-bold text-gray-900">{currentAutoStats.reviews.count}</span></div><div className="bg-gray-100 rounded-full h-2 overflow-hidden"><div className="bg-purple-500 h-full" style={{ width: `${currentAutoStats.reviews.rate}%` }}></div></div><span className="text-xs text-purple-600 font-medium">{currentAutoStats.reviews.rate}% respondeu</span></div>
                 </div>
             </div>
-        </div>
+      </div>
 
-        {/* MAPA DE CALOR */}
-        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 mb-6">
-            <h3 className="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2">
-                <Activity size={20} className="text-blue-600" />
-                Mapa de Calor - Atividade (Últimos 30 dias)
-            </h3>
-            
+      <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 mb-6">
+            <h3 className="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2"><Activity size={20} className="text-blue-600" />Mapa de Calor - Atividade (Últimos 30 dias)</h3>
             <div className="overflow-x-auto">
                 <div className="inline-block min-w-full">
-                {/* Header com dias */}
-                <div className="flex gap-1 mb-2 ml-32">
-                    {last30Days.map((day, idx) => (
-                    <div key={idx} className="w-6 text-center">
-                        <span className="text-xs text-gray-400">{day.label}</span>
-                    </div>
-                    ))}
-                </div>
-                
-                {/* Linhas de clientes */}
-                {clientsMetrics.slice(0, 8).map((client) => (
-                    <div key={client.clientId} className="flex items-center gap-1 mb-1">
-                    <div className="w-32 truncate text-xs text-gray-700 font-medium">
-                        {client.clientName}
-                    </div>
-                    {last30Days.map((day, idx) => {
-                        const activity = getClientActivityForDay(client, day.date);
-                        return (
-                        <div
-                            key={idx}
-                            className={`w-6 h-6 rounded ${
-                            activity === 'high' ? 'bg-green-500' :
-                            activity === 'medium' ? 'bg-green-300' :
-                            activity === 'low' ? 'bg-green-100' :
-                            'bg-gray-100'
-                            }`}
-                            title={`${client.clientName} - ${day.fullDate}: ${activity}`}
-                        />
-                        );
-                    })}
-                    {client.healthScore === 'risk' && (
-                        <span className="ml-2 text-xs text-red-600 font-bold">⚠️ Inativo</span>
-                    )}
-                    </div>
-                ))}
+                <div className="flex gap-1 mb-2 ml-32">{last30Days.map((day, idx) => (<div key={idx} className="w-6 text-center"><span className="text-xs text-gray-400">{day.label}</span></div>))}</div>
+                {clientsMetrics.slice(0, 8).map((client) => (<div key={client.clientId} className="flex items-center gap-1 mb-1"><div className="w-32 truncate text-xs text-gray-700 font-medium">{client.clientName}</div>{last30Days.map((day, idx) => {const activity = getClientActivityForDay(client, day.date);return (<div key={idx} className={`w-6 h-6 rounded ${activity === 'high' ? 'bg-green-500' : activity === 'medium' ? 'bg-green-300' : activity === 'low' ? 'bg-green-100' : 'bg-gray-100'}`} title={`${client.clientName} - ${day.fullDate}: ${activity}`}/>);})}{client.healthScore === 'risk' && <span className="ml-2 text-xs text-red-600 font-bold">⚠️ Inativo</span>}</div>))}
                 </div>
             </div>
-            
-            {/* Legenda */}
-            <div className="flex items-center gap-4 mt-4 pt-4 border-t border-gray-100">
-                <span className="text-xs text-gray-500">Legenda:</span>
-                <div className="flex items-center gap-1">
-                <div className="w-4 h-4 rounded bg-green-500"></div>
-                <span className="text-xs text-gray-600">Alta (5+ ações)</span>
-                </div>
-                <div className="flex items-center gap-1">
-                <div className="w-4 h-4 rounded bg-green-300"></div>
-                <span className="text-xs text-gray-600">Média (2-4 ações)</span>
-                </div>
-                <div className="flex items-center gap-1">
-                <div className="w-4 h-4 rounded bg-green-100"></div>
-                <span className="text-xs text-gray-600">Baixa (1 ação)</span>
-                </div>
-                <div className="flex items-center gap-1">
-                <div className="w-4 h-4 rounded bg-gray-100"></div>
-                <span className="text-xs text-gray-600">Sem atividade</span>
-                </div>
-            </div>
-        </div>
+            <div className="flex items-center gap-4 mt-4 pt-4 border-t border-gray-100"><span className="text-xs text-gray-500">Legenda:</span><div className="flex items-center gap-1"><div className="w-4 h-4 rounded bg-green-500"></div><span className="text-xs text-gray-600">Alta (5+ ações)</span></div><div className="flex items-center gap-1"><div className="w-4 h-4 rounded bg-green-300"></div><span className="text-xs text-gray-600">Média (2-4 ações)</span></div><div className="flex items-center gap-1"><div className="w-4 h-4 rounded bg-green-100"></div><span className="text-xs text-gray-600">Baixa (1 ação)</span></div><div className="flex items-center gap-1"><div className="w-4 h-4 rounded bg-gray-100"></div><span className="text-xs text-gray-600">Sem atividade</span></div></div>
+      </div>
 
-      {/* COMPARATIVO: CONSULTORIO vs CLINICA */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
-        {/* CONSULTORIO */}
         <div className="bg-gradient-to-br from-purple-50 to-white rounded-xl shadow-sm border border-purple-100 p-6">
-            <div className="flex items-center justify-between mb-4">
-            <h3 className="text-lg font-bold text-purple-900 flex items-center gap-2">
-                <Building2 size={20} />
-                CONSULTÓRIO
-            </h3>
-            <span className="text-xs bg-purple-100 text-purple-700 px-3 py-1 rounded-full font-bold">
-                {consultorioCount} cliente(s)
-            </span>
-            </div>
-            
+            <div className="flex items-center justify-between mb-4"><h3 className="text-lg font-bold text-purple-900 flex items-center gap-2"><Building2 size={20} />CONSULTÓRIO</h3><span className="text-xs bg-purple-100 text-purple-700 px-3 py-1 rounded-full font-bold">{consultorioCount} cliente(s)</span></div>
             <div className="space-y-3">
-            <div className="flex items-center justify-between py-2 border-b border-purple-100">
-                <span className="text-sm text-gray-700">Média agend/mês</span>
-                <span className="text-lg font-bold text-purple-900">{consultorioStats.avgMonthly}</span>
+            <div className="flex items-center justify-between py-2 border-b border-purple-100"><span className="text-sm text-gray-700">Média agend/mês</span><span className="text-lg font-bold text-purple-900">{consultorioStats.avgMonthly}</span></div>
+            <div className="flex items-center justify-between py-2 border-b border-purple-100"><span className="text-sm text-gray-700">Taxa "Não Veio"</span><span className="text-lg font-bold text-purple-900">{consultorioStats.noShowRate}%</span></div>
+            <div className="flex items-center justify-between py-2 border-b border-purple-100"><span className="text-sm text-gray-700">Taxa Automação</span><span className="text-lg font-bold text-green-600">{consultorioStats.automationRate}% ✅</span></div>
+            <div className="flex items-center justify-between py-2"><span className="text-sm text-gray-700">Ticket Médio/Mês</span><span className="text-lg font-bold text-purple-900">R$ {consultorioStats.avgTicket}</span></div>
             </div>
-            
-            <div className="flex items-center justify-between py-2 border-b border-purple-100">
-                <span className="text-sm text-gray-700">Taxa "Não Veio"</span>
-                <span className="text-lg font-bold text-purple-900">{consultorioStats.noShowRate}%</span>
-            </div>
-            
-            <div className="flex items-center justify-between py-2 border-b border-purple-100">
-                <span className="text-sm text-gray-700">Taxa Automação</span>
-                <span className="text-lg font-bold text-green-600">{consultorioStats.automationRate}% ✅</span>
-            </div>
-            
-            <div className="flex items-center justify-between py-2">
-                <span className="text-sm text-gray-700">Ticket Médio/Mês</span>
-                <span className="text-lg font-bold text-purple-900">R$ {consultorioStats.avgTicket}</span>
-            </div>
-            </div>
-            
-            <div className="mt-4 pt-4 border-t border-purple-100 bg-purple-50 -mx-6 -mb-6 px-6 py-3 rounded-b-xl">
-            <p className="text-xs text-purple-700">
-                <strong>Perfil:</strong> Médicos individuais, operação simples, ticket menor mas volume consistente.
-            </p>
-            </div>
+            <div className="mt-4 pt-4 border-t border-purple-100 bg-purple-50 -mx-6 -mb-6 px-6 py-3 rounded-b-xl"><p className="text-xs text-purple-700"><strong>Perfil:</strong> Médicos individuais, operação simples, ticket menor mas volume consistente.</p></div>
         </div>
-        
-        {/* CLINICA */}
         <div className="bg-gradient-to-br from-blue-50 to-white rounded-xl shadow-sm border border-blue-100 p-6">
-            <div className="flex items-center justify-between mb-4">
-            <h3 className="text-lg font-bold text-blue-900 flex items-center gap-2">
-                <Building2 size={20} />
-                CLÍNICA
-            </h3>
-            <span className="text-xs bg-blue-100 text-blue-700 px-3 py-1 rounded-full font-bold">
-                {clinicaCount} cliente(s)
-            </span>
-            </div>
-            
+            <div className="flex items-center justify-between mb-4"><h3 className="text-lg font-bold text-blue-900 flex items-center gap-2"><Building2 size={20} />CLÍNICA</h3><span className="text-xs bg-blue-100 text-blue-700 px-3 py-1 rounded-full font-bold">{clinicaCount} cliente(s)</span></div>
             <div className="space-y-3">
-            <div className="flex items-center justify-between py-2 border-b border-blue-100">
-                <span className="text-sm text-gray-700">Média agend/mês</span>
-                <span className="text-lg font-bold text-blue-900">{clinicaStats.avgMonthly}</span>
+            <div className="flex items-center justify-between py-2 border-b border-blue-100"><span className="text-sm text-gray-700">Média agend/mês</span><span className="text-lg font-bold text-blue-900">{clinicaStats.avgMonthly}</span></div>
+            <div className="flex items-center justify-between py-2 border-b border-blue-100"><span className="text-sm text-gray-700">Taxa "Não Veio"</span><span className="text-lg font-bold text-blue-900">{clinicaStats.noShowRate}% ✅</span></div>
+            <div className="flex items-center justify-between py-2 border-b border-blue-100"><span className="text-sm text-gray-700">Taxa Automação</span><span className="text-lg font-bold text-green-600">{clinicaStats.automationRate}% ✅</span></div>
+            <div className="flex items-center justify-between py-2"><span className="text-sm text-gray-700">Ticket Médio/Mês</span><span className="text-lg font-bold text-blue-900">R$ {clinicaStats.avgTicket}</span></div>
             </div>
-            
-            <div className="flex items-center justify-between py-2 border-b border-blue-100">
-                <span className="text-sm text-gray-700">Taxa "Não Veio"</span>
-                <span className="text-lg font-bold text-blue-900">{clinicaStats.noShowRate}% ✅</span>
-            </div>
-            
-            <div className="flex items-center justify-between py-2 border-b border-blue-100">
-                <span className="text-sm text-gray-700">Taxa Automação</span>
-                <span className="text-lg font-bold text-green-600">{clinicaStats.automationRate}% ✅</span>
-            </div>
-            
-            <div className="flex items-center justify-between py-2">
-                <span className="text-sm text-gray-700">Ticket Médio/Mês</span>
-                <span className="text-lg font-bold text-blue-900">R$ {clinicaStats.avgTicket}</span>
-            </div>
-            </div>
-            
-            <div className="mt-4 pt-4 border-t border-blue-100 bg-blue-50 -mx-6 -mb-6 px-6 py-3 rounded-b-xl">
-            <p className="text-xs text-blue-700">
-                <strong>Perfil:</strong> Multi-médico, alto volume, melhor ROI. Foco estratégico para crescimento.
-            </p>
-            </div>
+            <div className="mt-4 pt-4 border-t border-blue-100 bg-blue-50 -mx-6 -mb-6 px-6 py-3 rounded-b-xl"><p className="text-xs text-blue-700"><strong>Perfil:</strong> Multi-médico, alto volume, melhor ROI. Foco estratégico para crescimento.</p></div>
         </div>
       </div>
 
-      {/* Insight comparativo */}
-      <div className="bg-gradient-to-r from-blue-500 to-purple-600 rounded-xl p-6 mb-6 text-white">
-        <div className="flex items-start gap-3">
-            <div className="p-2 bg-white/20 rounded-lg">
-            <Target size={24} />
-            </div>
-            <div className="flex-1">
-            <h4 className="font-bold text-lg mb-2">💡 Insight Estratégico</h4>
-            <p className="text-white/90 text-sm leading-relaxed">
-                CLINICAs têm {((clinicaStats.avgTicket / consultorioStats.avgTicket - 1) * 100).toFixed(0)}% maior ticket médio e 
-                {' '}{((clinicaStats.avgMonthly / consultorioStats.avgMonthly - 1) * 100).toFixed(0)}% mais agendamentos. 
-                <strong className="text-white"> Recomendação: Focar prospecção B2B em clínicas multi-médico para maximizar ROI.</strong>
-            </p>
-            </div>
-        </div>
-      </div>
-
-      {/* TIMELINE DE EVENTOS CRÍTICOS */}
+      {/* LOGS GLOBAIS DO SISTEMA */}
       <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 mb-6">
-        <h3 className="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2">
-            <Activity size={20} className="text-blue-600" />
-            Timeline de Eventos (Últimas 24h)
-        </h3>
+        <div className="flex items-center justify-between mb-4">
+            <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2">
+            <BarChart3 size={20} className="text-gray-600" />
+            Logs Globais do Sistema
+            </h3>
+            <button className="text-sm text-blue-600 hover:text-blue-800 font-medium flex items-center gap-1">
+            Ver todos os logs
+            <ExternalLink size={14} />
+            </button>
+        </div>
         
-        <div className="space-y-3 max-h-96 overflow-y-auto custom-scrollbar pr-2">
-            {timelineEvents.map((event, idx) => (
-            <div key={idx} className="flex items-start gap-3 p-3 rounded-lg hover:bg-gray-50 transition-colors">
-                <div className={`p-2 rounded-lg flex-shrink-0 ${
-                event.type === 'success' ? 'bg-green-100' :
-                event.type === 'error' ? 'bg-red-100' :
-                event.type === 'warning' ? 'bg-yellow-100' :
-                'bg-blue-100'
+        <div className="space-y-2 font-mono text-xs max-h-64 overflow-y-auto">
+            {systemLogs.map((log, idx) => (
+            <div key={idx} className={`flex items-start gap-3 p-2 rounded ${
+                log.level === 'error' ? 'bg-red-50' :
+                log.level === 'warning' ? 'bg-yellow-50' :
+                'bg-gray-50'
+            }`}>
+                <span className="text-gray-400 shrink-0">[{log.time}]</span>
+                <span className={`font-bold shrink-0 ${
+                log.level === 'error' ? 'text-red-600' :
+                log.level === 'warning' ? 'text-yellow-600' :
+                'text-green-600'
                 }`}>
-                {event.icon}
-                </div>
-                
-                <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium text-gray-900">{event.title}</p>
-                <p className="text-xs text-gray-500 mt-0.5">{event.description}</p>
-                </div>
-                
-                <span className="text-xs text-gray-400 whitespace-nowrap">{event.time}</span>
+                {log.level === 'error' ? '❌' : log.level === 'warning' ? '⚠️' : '✅'}
+                </span>
+                <span className="flex-1 text-gray-700">{log.message}</span>
             </div>
             ))}
         </div>
@@ -1156,77 +902,152 @@ const OwnerDashboard: React.FC<OwnerDashboardProps> = ({ currentUser }) => {
 
       {/* SAÚDE TÉCNICA DO SISTEMA */}
       <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 mb-6">
-          <h3 className="text-lg font-bold text-gray-800 mb-6 flex items-center gap-2">
-            <Activity size={20} className="text-green-600" />
-            Saúde Técnica do Sistema
-          </h3>
-          
+          <h3 className="text-lg font-bold text-gray-800 mb-6 flex items-center gap-2"><Activity size={20} className="text-green-600" />Saúde Técnica do Sistema</h3>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            {/* Webhooks */}
             <div>
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-sm font-medium text-gray-700">Webhooks (24h)</span>
-                <CheckCircle size={16} className="text-green-500" />
-              </div>
-              <div className="bg-gray-100 rounded-full h-3 overflow-hidden mb-2">
-                <div className="bg-green-500 h-full" style={{ width: '98.5%' }}></div>
-              </div>
-              <div className="flex items-center justify-between text-xs">
-                <span className="text-gray-600">4.523 enviados</span>
-                <span className="font-bold text-green-600">98.5%</span>
-              </div>
+              <div className="flex items-center justify-between mb-2"><span className="text-sm font-medium text-gray-700">Webhooks (24h)</span><CheckCircle size={16} className="text-green-500" /></div>
+              <div className="bg-gray-100 rounded-full h-3 overflow-hidden mb-2"><div className="bg-green-500 h-full" style={{ width: '98.5%' }}></div></div>
+              <div className="flex items-center justify-between text-xs"><span className="text-gray-600">4.523 enviados</span><span className="font-bold text-green-600">98.5%</span></div>
               <p className="text-xs text-gray-500 mt-1">68 falhas registradas</p>
             </div>
-            
-            {/* Evolution API */}
             <div>
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-sm font-medium text-gray-700">Evolution API</span>
-                <CheckCircle size={16} className="text-green-500" />
-              </div>
-              <div className="bg-gray-100 rounded-full h-3 overflow-hidden mb-2">
-                <div className="bg-green-500 h-full" style={{ width: '100%' }}></div>
-              </div>
-              <div className="flex items-center justify-between text-xs">
-                <span className="text-gray-600">15/15 instâncias</span>
-                <span className="font-bold text-green-600">100%</span>
-              </div>
+              <div className="flex items-center justify-between mb-2"><span className="text-sm font-medium text-gray-700">Evolution API</span><CheckCircle size={16} className="text-green-500" /></div>
+              <div className="bg-gray-100 rounded-full h-3 overflow-hidden mb-2"><div className="bg-green-500 h-full" style={{ width: '100%' }}></div></div>
+              <div className="flex items-center justify-between text-xs"><span className="text-gray-600">15/15 instâncias</span><span className="font-bold text-green-600">100%</span></div>
               <p className="text-xs text-gray-500 mt-1">Todas online</p>
             </div>
-            
-            {/* Tempo de Resposta */}
             <div>
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-sm font-medium text-gray-700">Tempo Resposta</span>
-                <CheckCircle size={16} className="text-green-500" />
-              </div>
-              <div className="bg-gray-100 rounded-full h-3 overflow-hidden mb-2">
-                <div className="bg-green-500 h-full" style={{ width: '60%' }}></div>
-              </div>
-              <div className="flex items-center justify-between text-xs">
-                <span className="text-gray-600">Meta: &lt;2s</span>
-                <span className="font-bold text-green-600">1.2s</span>
-              </div>
+              <div className="flex items-center justify-between mb-2"><span className="text-sm font-medium text-gray-700">Tempo Resposta</span><CheckCircle size={16} className="text-green-500" /></div>
+              <div className="bg-gray-100 rounded-full h-3 overflow-hidden mb-2"><div className="bg-green-500 h-full" style={{ width: '60%' }}></div></div>
+              <div className="flex items-center justify-between text-xs"><span className="text-gray-600">Meta: &lt;2s</span><span className="font-bold text-green-600">1.2s</span></div>
               <p className="text-xs text-gray-500 mt-1">Ótima performance</p>
             </div>
           </div>
-          
-          {clientsMetrics.filter(c => c.webhookStatus !== 'healthy').length > 0 && (
-            <div className="mt-6 p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
-              <div className="flex items-center gap-2">
-                <AlertTriangle size={18} className="text-yellow-600" />
-                <p className="text-sm text-yellow-800">
-                  <strong>{clientsMetrics.filter(c => c.webhookStatus !== 'healthy').length} cliente(s)</strong> com problemas técnicos detectados.
-                </p>
-                <button className="ml-auto text-xs bg-yellow-600 text-white px-3 py-1.5 rounded-lg hover:bg-yellow-700 font-medium">
-                  Ver Detalhes
-                </button>
-              </div>
+      </div>
+
+      {/* EXPORTAÇÃO DE DADOS */}
+      <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 mb-6">
+        <h3 className="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2">
+          <Download size={20} className="text-blue-600" />
+          Exportar Dados
+        </h3>
+        
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="p-4 border border-gray-200 rounded-lg hover:border-blue-300 hover:bg-blue-50 transition-all cursor-pointer group">
+            <div className="flex items-center justify-between mb-2">
+              <h4 className="font-bold text-gray-900">Relatório de Clientes</h4>
+              <Download size={18} className="text-gray-400 group-hover:text-blue-600" />
             </div>
-          )}
+            <p className="text-sm text-gray-600 mb-3">
+              PDF completo com métricas de todos os clientes
+            </p>
+            <button className="w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm font-medium">
+              Gerar PDF
+            </button>
+          </div>
+          
+          <div className="p-4 border border-gray-200 rounded-lg hover:border-green-300 hover:bg-green-50 transition-all cursor-pointer group">
+            <div className="flex items-center justify-between mb-2">
+              <h4 className="font-bold text-gray-900">Planilha de Performance</h4>
+              <Download size={18} className="text-gray-400 group-hover:text-green-600" />
+            </div>
+            <p className="text-sm text-gray-600 mb-3">
+              Excel com dados detalhados de agendamentos
+            </p>
+            <button className="w-full px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 text-sm font-medium">
+              Gerar Excel
+            </button>
+          </div>
+          
+          <div className="p-4 border border-gray-200 rounded-lg hover:border-purple-300 hover:bg-purple-50 transition-all cursor-pointer group">
+            <div className="flex items-center justify-between mb-2">
+              <h4 className="font-bold text-gray-900">Logs de Webhooks</h4>
+              <Download size={18} className="text-gray-400 group-hover:text-purple-600" />
+            </div>
+            <p className="text-sm text-gray-600 mb-3">
+              CSV com histórico de webhooks enviados
+            </p>
+            <button className="w-full px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 text-sm font-medium">
+              Gerar CSV
+            </button>
+          </div>
+          
+          <div className="p-4 border border-gray-200 rounded-lg hover:border-orange-300 hover:bg-orange-50 transition-all cursor-pointer group">
+            <div className="flex items-center justify-between mb-2">
+              <h4 className="font-bold text-gray-900">Dados para Analytics</h4>
+              <Download size={18} className="text-gray-400 group-hover:text-orange-600" />
+            </div>
+            <p className="text-sm text-gray-600 mb-3">
+              JSON estruturado para análises externas
+            </p>
+            <button className="w-full px-4 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 text-sm font-medium">
+              Gerar JSON
+            </button>
+          </div>
+        </div>
+        
+        <div className="mt-4 flex items-center gap-3">
+          <select
+            value={filterPeriod}
+            onChange={(e) => setFilterPeriod(e.target.value as any)}
+            className="px-3 py-2 border border-gray-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500"
+          >
+            <option value="7d">Últimos 7 dias</option>
+            <option value="30d">Este mês</option>
+            <option value="custom">Período customizado</option>
+          </select>
+          
+          <p className="text-xs text-gray-500">
+            Selecione o período antes de exportar
+          </p>
+        </div>
+      </div>
+
+      {/* AÇÕES RÁPIDAS (Floating Sidebar) */}
+      <div className="fixed bottom-6 right-6 z-50">
+        <button
+          onClick={() => setShowQuickActions(!showQuickActions)}
+          className="w-14 h-14 bg-blue-600 text-white rounded-full shadow-2xl hover:bg-blue-700 transition-all flex items-center justify-center hover:scale-110"
+        >
+          <Zap size={24} />
+        </button>
+        
+        {showQuickActions && (
+          <div className="absolute bottom-16 right-0 bg-white rounded-xl shadow-2xl border border-gray-200 p-4 w-64 animate-in slide-in-from-bottom-4">
+            <h4 className="font-bold text-gray-800 mb-3 flex items-center gap-2">
+              <Zap size={16} className="text-blue-600" />
+              Ações Rápidas
+            </h4>
+            
+            <div className="space-y-2">
+              <button className="w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm font-medium text-left flex items-center gap-2">
+                <UserPlus size={16} />
+                Criar Cliente
+              </button>
+              
+              <button className="w-full px-4 py-2 bg-white border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50 text-sm font-medium text-left flex items-center gap-2">
+                <MessageSquare size={16} />
+                Email em Massa
+              </button>
+              
+              <button className="w-full px-4 py-2 bg-white border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50 text-sm font-medium text-left flex items-center gap-2">
+                <BarChart3 size={16} />
+                Relatório Mensal
+              </button>
+              
+              <button className="w-full px-4 py-2 bg-white border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50 text-sm font-medium text-left flex items-center gap-2">
+                <Eye size={16} />
+                Ver Logs Sistema
+              </button>
+              
+              <button className="w-full px-4 py-2 bg-white border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50 text-sm font-medium text-left flex items-center gap-2">
+                <Phone size={16} />
+                Suporte Ativo
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
 };
-
-export default OwnerDashboard;

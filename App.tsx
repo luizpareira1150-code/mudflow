@@ -11,7 +11,7 @@ import { ViewState, User, UserRole, Doctor, Organization, AccountType } from './
 import { authService, dataService } from './services/mockSupabase';
 import { Loader2 } from 'lucide-react';
 import { ToastProvider } from './components/ToastProvider';
-import OwnerDashboard from './components/OwnerDashboard';
+import { OwnerDashboard } from './components/OwnerDashboard';
 import { ActivityLogs } from './components/ActivityLogs';
 
 const App: React.FC = () => {
