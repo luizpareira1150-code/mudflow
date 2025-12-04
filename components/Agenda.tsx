@@ -2,7 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { Appointment, AppointmentStatus, User, AgendaConfig, Doctor, AvailableSlot } from '../types';
 import { dataService, authService } from '../services/mockSupabase';
-import { Clock, Plus, AlertCircle, CheckCircle, Settings, X, Save, Lock, CalendarOff, Trash2, User as UserIcon, Phone, Calendar as CalendarIcon, Edit2, FileText, Stethoscope, Tag, ChevronDown } from 'lucide-react';
+import { Clock, Plus, AlertCircle, CheckCircle, Settings, X, Save, Lock, CalendarOff, Trash2, User as UserIcon, Phone, Calendar as CalendarIcon, Edit2, FileText, Stethoscope, Tag, ChevronDown, AlertTriangle } from 'lucide-react';
 import { DatePicker } from './DatePicker';
 import { BookingModal } from './BookingModal';
 import { useToast } from './ToastProvider';
@@ -47,7 +47,10 @@ export const Agenda: React.FC<AgendaProps> = ({
   // Modal State - Details
   const [isDetailsModalOpen, setIsDetailsModalOpen] = useState(false);
   const [selectedAppointment, setSelectedAppointment] = useState<Appointment | null>(null);
-  const [isDeleteConfirming, setIsDeleteConfirming] = useState(false);
+  
+  // Modal State - Cancellation
+  const [isCancelModalOpen, setIsCancelModalOpen] = useState(false);
+  const [cancellationReason, setCancellationReason] = useState('');
   
   // Edit States for Existing Appointment
   const [editDate, setEditDate] = useState('');
@@ -118,7 +121,9 @@ export const Agenda: React.FC<AgendaProps> = ({
       setEditTime(slot.appointment.time);
       setEditProcedure(slot.appointment.procedure || '');
       setEditNotes(slot.appointment.notes || '');
-      setIsDeleteConfirming(false);
+      // Reset cancel states
+      setIsCancelModalOpen(false);
+      setCancellationReason('');
       setIsDetailsModalOpen(true);
     } else {
       setSelectedSlot(slot);
@@ -133,9 +138,17 @@ export const Agenda: React.FC<AgendaProps> = ({
 
   const handleDeleteAppointment = async () => {
     if (!selectedAppointment) return;
+    
+    // Mandatoriedade do motivo (exceto se for BLOQUEADO que é sistema)
+    if (selectedAppointment.status !== AppointmentStatus.BLOQUEADO && !cancellationReason.trim()) {
+        showToast('warning', 'O motivo do cancelamento é obrigatório.');
+        return;
+    }
+
     try {
         setLoading(true);
-        await dataService.deleteAppointment(selectedAppointment.id);
+        await dataService.deleteAppointment(selectedAppointment.id, cancellationReason);
+        setIsCancelModalOpen(false);
         setIsDetailsModalOpen(false);
         refreshSlots();
         if (selectedAppointment.status === AppointmentStatus.BLOQUEADO) {
@@ -147,7 +160,7 @@ export const Agenda: React.FC<AgendaProps> = ({
         showToast('error', 'Erro ao excluir.');
     } finally {
         setLoading(false);
-        setIsDeleteConfirming(false);
+        setCancellationReason('');
     }
   };
 
@@ -273,32 +286,31 @@ export const Agenda: React.FC<AgendaProps> = ({
       {/* HEADER WITH DOCTOR SELECTOR */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
         <div>
-          <h2 className="text-3xl font-bold text-slate-800">Agenda Médica</h2>
+          <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-1">Agenda Médica</h2>
           
-          <div className="flex items-center gap-2 mt-2">
+          <div className="flex items-center gap-2">
              {!isConsultorio ? (
-                 <div className="relative">
-                    <UserIcon size={16} className="absolute left-2.5 top-2.5 text-gray-400" />
+                 <div className="relative group">
                     <select
                         value={selectedDoctorId}
                         onChange={(e) => onDoctorChange(e.target.value)}
-                        className="pl-9 pr-8 py-1.5 bg-white border border-gray-200 rounded-lg text-sm font-semibold text-gray-700 outline-none focus:ring-2 focus:ring-blue-500 appearance-none min-w-[200px]"
+                        className="pr-10 py-1 bg-transparent border-none p-0 text-3xl font-bold text-slate-800 outline-none focus:ring-0 appearance-none min-w-[200px] cursor-pointer hover:text-blue-600 transition-colors"
+                        style={{ backgroundImage: 'none' }}
                     >
                         {doctors.map(doc => (
-                            <option key={doc.id} value={doc.id}>{doc.name}</option>
+                            <option key={doc.id} value={doc.id} className="text-lg text-slate-800">{doc.name}</option>
                         ))}
                     </select>
-                    <ChevronDown size={14} className="absolute right-2.5 top-3 text-gray-400 pointer-events-none" />
+                    <ChevronDown size={28} className="absolute right-0 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none group-hover:text-blue-500 transition-colors" />
                  </div>
              ) : (
-                 <div className="flex items-center gap-2 text-gray-600 font-medium bg-white px-3 py-1.5 rounded-lg border border-gray-200 shadow-sm">
-                    <UserIcon size={16} className="text-blue-600" />
+                 <div className="text-3xl font-bold text-slate-800 py-1">
                     {currentDoctorName || 'Meu Consultório'}
                  </div>
              )}
 
-             <span className="text-gray-300">|</span>
-             <p className="text-sm text-gray-500">
+             <span className="text-gray-300 text-3xl font-light mx-2">|</span>
+             <p className="text-sm text-gray-500 self-center pt-2">
                 Intervalo: <span className="font-medium text-gray-700">{formatDuration(config.intervalMinutes)}</span>
              </p>
           </div>
@@ -547,52 +559,79 @@ export const Agenda: React.FC<AgendaProps> = ({
                     )}
                 </div>
 
-                {isDeleteConfirming ? (
-                   <div className="bg-red-50 p-4 rounded-xl border border-red-100 mb-0">
-                      <p className="text-red-800 text-sm font-bold text-center mb-3">
-                        {selectedAppointment.status === AppointmentStatus.BLOQUEADO 
-                          ? 'Confirmar liberação deste horário?' 
-                          : 'Tem certeza que deseja cancelar?'}
-                      </p>
-                      <div className="flex gap-3">
-                        <button
-                          onClick={() => setIsDeleteConfirming(false)}
-                          className="flex-1 py-2 bg-white border border-red-200 text-red-600 rounded-lg text-sm font-medium hover:bg-red-50 transition-colors"
-                        >
-                          Não
-                        </button>
-                        <button
-                          onClick={handleDeleteAppointment}
-                          disabled={loading}
-                          className="flex-1 py-2 bg-red-600 text-white rounded-lg text-sm font-medium hover:bg-red-700 transition-colors shadow-sm"
-                        >
-                          {loading ? 'Processando...' : 'Sim, Confirmar'}
-                        </button>
-                      </div>
-                   </div>
-                ) : (
-                   <div className="flex gap-3">
-                      <button
+                <div className="flex gap-3">
+                    <button
                         type="button"
-                        onClick={() => setIsDeleteConfirming(true)}
+                        onClick={() => setIsCancelModalOpen(true)}
                         className="flex-1 py-3 bg-white border border-red-200 text-red-600 hover:bg-red-50 rounded-xl font-medium transition-colors flex justify-center items-center gap-2 shadow-sm"
-                      >
+                    >
                         <Trash2 size={18} />
                         {selectedAppointment.status === AppointmentStatus.BLOQUEADO ? 'Liberar Horário' : 'Cancelar'}
-                      </button>
-                      
-                      {selectedAppointment.status !== AppointmentStatus.BLOQUEADO && (
+                    </button>
+                    
+                    {selectedAppointment.status !== AppointmentStatus.BLOQUEADO && (
                         <button
-                          type="button"
-                          onClick={handleUpdateAppointment}
-                          className="flex-1 py-3 bg-blue-600 text-white rounded-xl font-medium hover:bg-blue-700 transition-colors shadow-md flex justify-center items-center gap-2"
+                            type="button"
+                            onClick={handleUpdateAppointment}
+                            className="flex-1 py-3 bg-blue-600 text-white rounded-xl font-medium hover:bg-blue-700 transition-colors shadow-md flex justify-center items-center gap-2"
                         >
-                          <Save size={18} />
-                          Salvar
+                            <Save size={18} />
+                            Salvar
                         </button>
-                      )}
-                   </div>
+                    )}
+                </div>
+            </div>
+        </div>
+      )}
+
+      {/* Cancellation Pop-up Modal */}
+      {isCancelModalOpen && selectedAppointment && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[60] p-4">
+            <div className="bg-white rounded-2xl shadow-xl max-w-sm w-full p-6 animate-in zoom-in-95 duration-200">
+                <div className="w-12 h-12 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                    <AlertTriangle size={24} className="text-red-600" />
+                </div>
+                <h3 className="text-lg font-bold text-gray-900 text-center mb-2">
+                    {selectedAppointment.status === AppointmentStatus.BLOQUEADO ? 'Confirmar Liberação' : 'Confirmar Cancelamento'}
+                </h3>
+                <p className="text-sm text-gray-500 text-center mb-4">
+                    {selectedAppointment.status === AppointmentStatus.BLOQUEADO 
+                        ? 'Tem certeza que deseja liberar este horário?' 
+                        : 'Esta ação removerá o agendamento da lista.'}
+                </p>
+
+                {selectedAppointment.status !== AppointmentStatus.BLOQUEADO && (
+                    <div className="mb-4">
+                        <label className="block text-xs font-bold text-gray-700 uppercase mb-2">
+                            Motivo do Cancelamento <span className="text-red-500">*</span>
+                        </label>
+                        <textarea
+                            value={cancellationReason}
+                            onChange={(e) => setCancellationReason(e.target.value)}
+                            placeholder="Descreva o motivo..."
+                            className="w-full bg-white border border-red-200 rounded-lg p-3 text-sm outline-none focus:ring-2 focus:ring-red-200"
+                            rows={3}
+                            autoFocus
+                        />
+                    </div>
                 )}
+
+                <div className="flex gap-3">
+                    <button
+                        onClick={() => { setIsCancelModalOpen(false); setCancellationReason(''); }}
+                        className="flex-1 py-2.5 px-4 border border-gray-200 rounded-xl text-gray-700 font-medium hover:bg-gray-50 transition-colors"
+                        disabled={loading}
+                    >
+                        Voltar
+                    </button>
+                    <button
+                        onClick={handleDeleteAppointment}
+                        disabled={loading || (selectedAppointment.status !== AppointmentStatus.BLOQUEADO && !cancellationReason.trim())}
+                        className="flex-1 py-2.5 px-4 bg-red-600 text-white rounded-xl font-medium hover:bg-red-700 transition-colors flex justify-center shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                        {loading ? 'Processando...' : 'Confirmar'}
+                    </button>
+                </div>
             </div>
         </div>
       )}

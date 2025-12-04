@@ -1,8 +1,7 @@
-
 import React, { useEffect, useState } from 'react';
 import { Appointment, AppointmentStatus, User, Column, Doctor } from '../types';
 import { dataService } from '../services/mockSupabase';
-import { Phone, User as UserIcon, Edit2, X, Save, Trash2, Calendar as CalendarIcon, Stethoscope, ChevronDown } from 'lucide-react';
+import { Phone, User as UserIcon, Edit2, X, Save, Trash2, Calendar as CalendarIcon, Stethoscope, ChevronDown, AlertTriangle } from 'lucide-react';
 import { DatePicker } from './DatePicker';
 import { useToast } from './ToastProvider';
 
@@ -33,14 +32,16 @@ export const CRM: React.FC<CRMProps> = ({ user, doctors, selectedDoctorId, onDoc
   const [isDetailsModalOpen, setIsDetailsModalOpen] = useState(false);
   const [selectedAppointment, setSelectedAppointment] = useState<Appointment | null>(null);
   
+  // Cancel Modal State
+  const [isCancelModalOpen, setIsCancelModalOpen] = useState(false);
+  const [cancellationReason, setCancellationReason] = useState('');
+
   // Edit States for Modal
   const [editDate, setEditDate] = useState('');
   const [editTime, setEditTime] = useState('');
   const [editProcedure, setEditProcedure] = useState('');
   const [editNotes, setEditNotes] = useState('');
   const [procedureOptions, setProcedureOptions] = useState<string[]>([]);
-
-  const [isDeleteConfirming, setIsDeleteConfirming] = useState(false);
 
   // 1. Fetch Procedure Options (dynamic per doctor)
   useEffect(() => {
@@ -122,7 +123,8 @@ export const CRM: React.FC<CRMProps> = ({ user, doctors, selectedDoctorId, onDoc
     setEditTime(appt.time);
     setEditProcedure(appt.procedure || '');
     setEditNotes(appt.notes || '');
-    setIsDeleteConfirming(false);
+    setIsCancelModalOpen(false);
+    setCancellationReason('');
     setIsDetailsModalOpen(true);
   };
 
@@ -145,12 +147,22 @@ export const CRM: React.FC<CRMProps> = ({ user, doctors, selectedDoctorId, onDoc
 
   const handleDeleteAppointment = async () => {
       if (!selectedAppointment) return;
+      
+      // Mandatoriedade
+      if (!cancellationReason.trim()) {
+          showToast('warning', 'O motivo do cancelamento é obrigatório.');
+          return;
+      }
+
       try {
-          await dataService.deleteAppointment(selectedAppointment.id);
+          await dataService.deleteAppointment(selectedAppointment.id, cancellationReason);
+          setIsCancelModalOpen(false);
           setIsDetailsModalOpen(false);
           showToast('success', 'Agendamento cancelado.');
       } catch (e) { 
           showToast('error', 'Erro ao excluir.');
+      } finally {
+        setCancellationReason('');
       }
   };
 
@@ -358,49 +370,74 @@ export const CRM: React.FC<CRMProps> = ({ user, doctors, selectedDoctorId, onDoc
                     </div>
                 </div>
 
-                {isDeleteConfirming ? (
-                   <div className="bg-red-50 p-4 rounded-xl border border-red-100 mb-0">
-                      <p className="text-red-800 text-sm font-bold text-center mb-3">
-                        Tem certeza que deseja cancelar este agendamento?
-                      </p>
-                      <div className="flex gap-3">
-                        <button
-                          onClick={() => setIsDeleteConfirming(false)}
-                          className="flex-1 py-2 bg-white border border-red-200 text-red-600 rounded-lg text-sm font-medium hover:bg-red-50 transition-colors"
-                        >
-                          Não
-                        </button>
-                        <button
-                          onClick={handleDeleteAppointment}
-                          className="flex-1 py-2 bg-red-600 text-white rounded-lg text-sm font-medium hover:bg-red-700 transition-colors shadow-sm"
-                        >
-                          Sim, Cancelar
-                        </button>
-                      </div>
-                   </div>
-                ) : (
-                   <div className="flex gap-3">
-                      <button
+                <div className="flex gap-3">
+                    <button
                         type="button"
-                        onClick={() => setIsDeleteConfirming(true)}
+                        onClick={() => setIsCancelModalOpen(true)}
                         className="flex-1 py-3 bg-white border border-red-200 text-red-600 hover:bg-red-50 rounded-xl font-medium transition-colors flex justify-center items-center gap-2 shadow-sm"
-                      >
+                    >
                         <Trash2 size={18} />
                         Cancelar
-                      </button>
-                      <button
+                    </button>
+                    <button
                         type="button"
                         onClick={handleUpdateAppointment}
                         className="flex-1 py-3 bg-blue-600 text-white rounded-xl font-medium hover:bg-blue-700 transition-colors shadow-md flex justify-center items-center gap-2"
-                      >
+                    >
                         <Save size={18} />
                         Salvar
-                      </button>
-                   </div>
-                )}
+                    </button>
+                </div>
             </div>
         </div>
       )}
+
+      {/* Cancellation Pop-up Modal */}
+      {isCancelModalOpen && selectedAppointment && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[60] p-4">
+            <div className="bg-white rounded-2xl shadow-xl max-w-sm w-full p-6 animate-in zoom-in-95 duration-200">
+                <div className="w-12 h-12 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                    <AlertTriangle size={24} className="text-red-600" />
+                </div>
+                <h3 className="text-lg font-bold text-gray-900 text-center mb-2">Confirmar Cancelamento</h3>
+                <p className="text-sm text-gray-500 text-center mb-4">
+                    Esta ação removerá o agendamento da lista.
+                </p>
+
+                <div className="mb-4">
+                    <label className="block text-xs font-bold text-gray-700 uppercase mb-2">
+                        Motivo do Cancelamento <span className="text-red-500">*</span>
+                    </label>
+                    <textarea
+                        value={cancellationReason}
+                        onChange={(e) => setCancellationReason(e.target.value)}
+                        placeholder="Descreva o motivo..."
+                        className="w-full bg-white border border-red-200 rounded-lg p-3 text-sm outline-none focus:ring-2 focus:ring-red-200"
+                        rows={3}
+                        autoFocus
+                    />
+                </div>
+
+                <div className="flex gap-3">
+                    <button
+                        onClick={() => { setIsCancelModalOpen(false); setCancellationReason(''); }}
+                        className="flex-1 py-2.5 px-4 border border-gray-200 rounded-xl text-gray-700 font-medium hover:bg-gray-50 transition-colors"
+                        disabled={loading}
+                    >
+                        Voltar
+                    </button>
+                    <button
+                        onClick={handleDeleteAppointment}
+                        disabled={loading || !cancellationReason.trim()}
+                        className="flex-1 py-2.5 px-4 bg-red-600 text-white rounded-xl font-medium hover:bg-red-700 transition-colors flex justify-center shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                        {loading ? 'Processando...' : 'Confirmar'}
+                    </button>
+                </div>
+            </div>
+        </div>
+      )}
+
     </div>
   );
 };

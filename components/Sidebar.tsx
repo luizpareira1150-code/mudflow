@@ -1,3 +1,4 @@
+
 import React from 'react';
 import { User, UserRole, ViewState } from '../types';
 import { LayoutDashboard, Users, Calendar, LogOut, Settings } from 'lucide-react';
@@ -11,7 +12,8 @@ interface SidebarProps {
 
 export const Sidebar: React.FC<SidebarProps> = ({ user, activePage, onNavigate, onLogout }) => {
   const menuItems = [
-    { id: ViewState.Dashboard, label: 'CRM', icon: LayoutDashboard, roles: [UserRole.SECRETARY, UserRole.DOCTOR_ADMIN, UserRole.OWNER] },
+    { id: ViewState.Dashboard, label: 'Visão Global', icon: LayoutDashboard, roles: [UserRole.OWNER] },
+    { id: ViewState.Dashboard, label: 'CRM', icon: LayoutDashboard, roles: [UserRole.SECRETARY, UserRole.DOCTOR_ADMIN] },
     { id: ViewState.Agenda, label: 'Agenda', icon: Calendar, roles: [UserRole.SECRETARY, UserRole.DOCTOR_ADMIN] },
     { id: ViewState.Settings, label: 'Administração', icon: Settings, roles: [UserRole.OWNER, UserRole.DOCTOR_ADMIN] },
   ];
@@ -32,7 +34,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ user, activePage, onNavigate, 
         </div>
 
         <nav className="space-y-1">
-          {menuItems.map((item) => {
+          {menuItems.map((item, idx) => {
             if (!item.roles.includes(user.role)) return null;
             
             const Icon = item.icon;
@@ -40,7 +42,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ user, activePage, onNavigate, 
             
             return (
               <button
-                key={item.id}
+                key={`${item.id}-${idx}`}
                 onClick={() => onNavigate(item.id)}
                 className={`w-full flex items-center gap-3 px-4 py-3 text-sm font-medium rounded-lg transition-colors
                   ${isActive 

@@ -11,6 +11,7 @@ import { ViewState, User, UserRole, Doctor, Organization, AccountType } from './
 import { authService, dataService } from './services/mockSupabase';
 import { Loader2 } from 'lucide-react';
 import { ToastProvider } from './components/ToastProvider';
+import OwnerDashboard from './components/OwnerDashboard';
 
 const App: React.FC = () => {
   const [currentView, setView] = useState<ViewState>(ViewState.Dashboard);
@@ -31,7 +32,7 @@ const App: React.FC = () => {
     setLoading(false);
   }, []);
 
-  // Fetch doctors and organization when user logs in
+  // Fetch doctors and organization when user logs in or when updated
   useEffect(() => {
     if (user && user.role !== UserRole.OWNER) {
         const loadContext = async () => {
@@ -42,12 +43,24 @@ const App: React.FC = () => {
                 setDoctors(docs);
                 if (docs.length > 0 && !selectedDoctorId) {
                     setSelectedDoctorId(docs[0].id);
+                } else if (docs.length > 0 && selectedDoctorId) {
+                    // Check if selected doctor still exists
+                    const exists = docs.find(d => d.id === selectedDoctorId);
+                    if (!exists) setSelectedDoctorId(docs[0].id);
                 }
             } catch (error) {
                 console.error("Failed to load application context", error);
             }
         };
+
         loadContext();
+
+        // Listen for updates from Admin panel (e.g., Doctor Created/Deleted)
+        window.addEventListener('medflow:doctors-updated', loadContext);
+        
+        return () => {
+            window.removeEventListener('medflow:doctors-updated', loadContext);
+        };
     }
   }, [user]);
 
@@ -96,7 +109,7 @@ const App: React.FC = () => {
       case ViewState.Dashboard:
         // Owner sees the Stats Dashboard, others see the CRM Kanban
         if (user.role === UserRole.OWNER) {
-            return <Dashboard />;
+            return <OwnerDashboard currentUser={user} />;
         }
         return (
             <CRM 

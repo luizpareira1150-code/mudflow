@@ -1,66 +1,130 @@
-
-
 import { User, UserRole, Appointment, AppointmentStatus, AgendaConfig, ClinicSettings, Doctor, AvailableSlot, Organization, AccountType } from '../types';
 import { N8NIntegrationService, N8NOutgoingPayload, generateApiToken } from './n8nIntegration';
+import { passwordService } from './passwordService';
 
+// Updated interface to use hash instead of plain password
 interface StoredUser extends User {
-  password?: string;
+  passwordHash: string;
 }
 
-// Initial Mock Data
-const MOCK_CLINIC_ID = 'clinic_123';
+// Initial Mock Data IDs
+const ORG_CLINICA_ID = 'org_clinica_001';
+const ORG_CONSULTORIO_ID = 'org_consultorio_001';
 
 const initialOrganizations: Organization[] = [
-  { id: MOCK_CLINIC_ID, accountType: AccountType.CLINICA, name: 'Clínica Exemplo', ownerUserId: 'owner_001', maxDoctors: 25 }
+  { id: ORG_CLINICA_ID, accountType: AccountType.CLINICA, name: 'Clínica Multi-Médicos', ownerUserId: 'user_med_cli', maxDoctors: 25 },
+  { id: ORG_CONSULTORIO_ID, accountType: AccountType.CONSULTORIO, name: 'Consultório Dr. Solo', ownerUserId: 'user_med_con', maxDoctors: 1 }
 ];
 
+// NOTE: Initial users are now initialized with a special prefix "PLAIN:" to trigger
+// the auto-migration script on first load.
 const initialUsers: StoredUser[] = [
-  { id: 'owner_001', name: 'Sr. Dono', username: 'admin', password: '123', email: 'dono@medflow.com', role: UserRole.OWNER, clinicId: 'global' },
-  { id: 'doc_admin_1', name: 'Dr. Gestor', username: 'medico', password: '123', email: 'medico@medflow.com', role: UserRole.DOCTOR_ADMIN, clinicId: MOCK_CLINIC_ID },
-  { id: 'sec_1', name: 'Maria Secretária', username: 'secretaria', password: '123', email: 'sec@medflow.com', role: UserRole.SECRETARY, clinicId: MOCK_CLINIC_ID },
+  // 1. DONO
+  { 
+    id: 'user_owner', 
+    name: 'Super Admin', 
+    username: 'admin', 
+    passwordHash: 'PLAIN:123', 
+    email: 'admin@medflow.com', 
+    role: UserRole.OWNER, 
+    clinicId: 'global' 
+  },
+  
+  // 2. MÉDICO CLÍNICA (Multi-agendas)
+  { 
+    id: 'user_med_cli', 
+    name: 'Dr. Diretor', 
+    username: 'medicocli', 
+    passwordHash: 'PLAIN:123', 
+    email: 'diretor@clinica.com', 
+    role: UserRole.DOCTOR_ADMIN, 
+    clinicId: ORG_CLINICA_ID 
+  },
+  
+  // 3. SECRETÁRIA (Da Clínica)
+  { 
+    id: 'user_sec', 
+    name: 'Secretária Ana', 
+    username: 'secretaria', 
+    passwordHash: 'PLAIN:123', 
+    email: 'ana@clinica.com', 
+    role: UserRole.SECRETARY, 
+    clinicId: ORG_CLINICA_ID 
+  },
+
+  // 4. MÉDICO CONSULTÓRIO (Solo)
+  { 
+    id: 'user_med_con', 
+    name: 'Dr. Roberto Solo', 
+    username: 'medicocon', 
+    passwordHash: 'PLAIN:123', 
+    email: 'roberto@consultorio.com', 
+    role: UserRole.DOCTOR_ADMIN, 
+    clinicId: ORG_CONSULTORIO_ID 
+  },
 ];
 
 const initialDoctors: Doctor[] = [
-  { id: 'doc_1', organizationId: MOCK_CLINIC_ID, name: 'Dr. House', specialty: 'Diagnóstico', color: 'blue' },
-  { id: 'doc_2', organizationId: MOCK_CLINIC_ID, name: 'Dr. Wilson', specialty: 'Oncologia', color: 'green' }
+  // Médicos da Clínica (Múltiplos)
+  { id: 'doc_cli_1', organizationId: ORG_CLINICA_ID, name: 'Dr. Diretor (Cardio)', specialty: 'Cardiologia', color: 'blue' },
+  { id: 'doc_cli_2', organizationId: ORG_CLINICA_ID, name: 'Dra. Julia (Derma)', specialty: 'Dermatologia', color: 'purple' },
+  { id: 'doc_cli_3', organizationId: ORG_CLINICA_ID, name: 'Dr. Pedro (Geral)', specialty: 'Clínico Geral', color: 'green' },
+
+  // Médico do Consultório (Único)
+  { id: 'doc_solo_1', organizationId: ORG_CONSULTORIO_ID, name: 'Dr. Roberto Solo', specialty: 'Pediatria', color: 'teal' }
 ];
 
 const initialAgendaConfigs: AgendaConfig[] = [
   { 
-    clinicId: MOCK_CLINIC_ID, 
+    clinicId: ORG_CLINICA_ID, 
     startHour: '08:00', 
     endHour: '18:00', 
     intervalMinutes: 30,
-    availableProcedures: ['Consulta Inicial', 'Retorno', 'Exame de Rotina', 'Procedimento Estético']
+    availableProcedures: ['Consulta Inicial', 'Retorno', 'Exame', 'Procedimento']
+  },
+  { 
+    clinicId: ORG_CONSULTORIO_ID, 
+    startHour: '09:00', 
+    endHour: '17:00', 
+    intervalMinutes: 60,
+    availableProcedures: ['Consulta Pediátrica', 'Vacinação', 'Emergência']
   }
 ];
 
 const initialSettings: ClinicSettings[] = [
   { 
-    clinicId: MOCK_CLINIC_ID, 
-    n8nWebhookUrl: 'https://n8n.example.com/webhook',
+    clinicId: ORG_CLINICA_ID, 
+    n8nWebhookUrl: 'https://n8n.example.com/webhook-clinica',
     n8nProductionMode: false,
-    evolutionInstanceName: 'instance_1',
-    evolutionApiKey: 'token_123',
-    clinicToken: 'clinic_abc123_xyz789',
-    apiToken: 'medflow_demo_token_123'
+    evolutionInstanceName: 'instance_clinica',
+    evolutionApiKey: 'token_clinica',
+    clinicToken: 'token_legado_clinica',
+    apiToken: 'api_token_clinica_123'
+  },
+  { 
+    clinicId: ORG_CONSULTORIO_ID, 
+    n8nWebhookUrl: 'https://n8n.example.com/webhook-consultorio',
+    n8nProductionMode: false,
+    evolutionInstanceName: 'instance_consultorio',
+    evolutionApiKey: 'token_consultorio',
+    apiToken: 'api_token_consultorio_123'
   }
 ];
 
 const initialAppointments: Appointment[] = [
   { 
     id: 'appt_1', 
-    clinicId: MOCK_CLINIC_ID, 
-    doctorId: 'doc_1',
-    slotId: 'slot_init_1',
+    clinicId: ORG_CLINICA_ID, 
+    doctorId: 'doc_cli_1',
+    slotId: 'slot_1',
     patientId: 'pat_1', 
-    patientName: 'João Silva',
-    patientPhone: '5511999999999',
+    patientName: 'João da Silva',
+    patientPhone: '11999990001',
     date: new Date().toISOString().split('T')[0], 
     time: '09:00', 
     status: AppointmentStatus.AGENDADO,
     procedure: 'Consulta Inicial',
-    notes: 'Primeira vez na clínica'
+    notes: 'Paciente novo'
   }
 ];
 
@@ -88,6 +152,49 @@ const getStorage = <T>(key: string, initial: T): T => {
 const setStorage = <T>(key: string, data: T) => {
   localStorage.setItem(key, JSON.stringify(data));
 };
+
+// --- SECURITY & MIGRATION SERVICE ---
+// Automatically migrates plaintext passwords to bcrypt hashes on app load
+const migratePasswords = async () => {
+  const users = getStorage<any[]>(USERS_KEY, initialUsers);
+  let hasChanges = false;
+  
+  const updatedUsers = await Promise.all(users.map(async (u) => {
+    // 1. Handle "PLAIN:" prefix used in initialUsers
+    if (u.passwordHash && u.passwordHash.startsWith('PLAIN:')) {
+      const plain = u.passwordHash.replace('PLAIN:', '');
+      u.passwordHash = await passwordService.hashPassword(plain);
+      hasChanges = true;
+      return u;
+    }
+
+    // 2. Handle legacy "password" field (Migration from old schema)
+    if (u.password) {
+      u.passwordHash = await passwordService.hashPassword(u.password);
+      delete u.password; // Remove insecure field
+      hasChanges = true;
+      return u;
+    }
+
+    // 3. Handle legacy stored plaintext in passwordHash (Dev artifacts)
+    if (u.passwordHash && passwordService.needsMigration(u.passwordHash)) {
+      u.passwordHash = await passwordService.hashPassword(u.passwordHash);
+      hasChanges = true;
+      return u;
+    }
+
+    return u;
+  }));
+
+  if (hasChanges) {
+    console.log('🔒 [Security] Migrated insecure passwords to bcrypt hashes.');
+    setStorage(USERS_KEY, updatedUsers);
+  }
+};
+
+// Trigger migration on module load (simulates app startup)
+migratePasswords();
+
 
 // --- N8N SIMULATION SERVICE ---
 export const n8nService = {
@@ -167,12 +274,20 @@ export const authService = {
   login: async (username: string, password: string): Promise<User | null> => {
     await delay(500);
     const users = getStorage<StoredUser[]>(USERS_KEY, initialUsers);
-    const user = users.find(u => u.username.toLowerCase() === username.toLowerCase() && u.password === password);
-    if (user) {
-      const { password: _, ...safeUser } = user;
-      setStorage(CURRENT_USER_KEY, safeUser);
-      return safeUser;
+    
+    // Find user by username only
+    const user = users.find(u => u.username.toLowerCase() === username.toLowerCase());
+    
+    if (user && user.passwordHash) {
+      // Verify password using bcrypt
+      const isValid = await passwordService.verifyPassword(password, user.passwordHash);
+      if (isValid) {
+        const { passwordHash: _, ...safeUser } = user;
+        setStorage(CURRENT_USER_KEY, safeUser);
+        return safeUser;
+      }
     }
+    
     return null;
   },
   
@@ -203,9 +318,15 @@ export const authService = {
     if (!currentUser) return false;
     const users = getStorage<StoredUser[]>(USERS_KEY, initialUsers);
     const storedUser = users.find(u => u.id === currentUser.id);
-    return storedUser ? storedUser.password === password : false;
+    
+    if (storedUser && storedUser.passwordHash) {
+      return passwordService.verifyPassword(password, storedUser.passwordHash);
+    }
+    return false;
   },
+
   logout: async () => localStorage.removeItem(CURRENT_USER_KEY),
+  
   getCurrentUser: (): User | null => {
     const stored = localStorage.getItem(CURRENT_USER_KEY);
     return stored ? JSON.parse(stored) : null;
@@ -243,6 +364,9 @@ export const dataService = {
         clinicId: doctor.organizationId
     }, 'Doctor Created');
 
+    // Notify app to update state
+    window.dispatchEvent(new Event('medflow:doctors-updated'));
+
     return newDoctor;
   },
 
@@ -270,6 +394,9 @@ export const dataService = {
             clinicId: doc.organizationId
         }, 'Doctor Deleted');
     }
+
+    // Notify app to update state
+    window.dispatchEvent(new Event('medflow:doctors-updated'));
   },
 
   // USERS
@@ -277,10 +404,11 @@ export const dataService = {
     await delay(300);
     const users = getStorage<StoredUser[]>(USERS_KEY, initialUsers);
     const filtered = (clinicId && clinicId !== 'global') ? users.filter(u => u.clinicId === clinicId) : users;
-    return filtered.map(({ password, ...u }) => u);
+    // Return safe users without password hash
+    return filtered.map(({ passwordHash, ...u }) => u);
   },
   
-  createUser: async (user: Omit<StoredUser, 'id'> & { accountType?: AccountType; organizationName?: string }): Promise<User> => {
+  createUser: async (user: Omit<StoredUser, 'id' | 'passwordHash'> & { password?: string; accountType?: AccountType; organizationName?: string }): Promise<User> => {
     await delay(300);
     const users = getStorage<StoredUser[]>(USERS_KEY, initialUsers);
     if (users.some(u => u.username === user.username)) throw new Error("Nome de usuário já existe.");
@@ -288,15 +416,25 @@ export const dataService = {
     if (user.role === UserRole.SECRETARY) {
         const orgs = getStorage<Organization[]>(ORGS_KEY, initialOrganizations);
         const org = orgs.find(o => o.id === user.clinicId);
-        
-        // Dynamic limit: 5 for Clinics, 2 for Consultorios (default)
         const maxSecretaries = org?.accountType === AccountType.CLINICA ? 5 : 2;
-        
         const count = users.filter(u => u.clinicId === user.clinicId && u.role === UserRole.SECRETARY).length;
         if (count >= maxSecretaries) throw new Error(`Limite atingido: Você só pode criar até ${maxSecretaries} contas de secretária.`);
     }
     
-    const newUser = { ...user, id: Math.random().toString(36).substr(2, 9) };
+    // Hash password before saving
+    const plainPassword = user.password || '123456'; // Fallback only if missing (should not happen in UI)
+    const hashedPassword = await passwordService.hashPassword(plainPassword);
+
+    const newUser: StoredUser = { 
+      id: Math.random().toString(36).substr(2, 9),
+      name: user.name,
+      username: user.username,
+      email: user.email,
+      role: user.role,
+      clinicId: user.clinicId,
+      passwordHash: hashedPassword
+    };
+
     users.push(newUser);
     setStorage(USERS_KEY, users);
     
@@ -322,7 +460,7 @@ export const dataService = {
         setStorage(DOCTORS_KEY, doctors);
     }
 
-    const { password, accountType, organizationName, ...safeUser } = newUser;
+    const { passwordHash, ...safeUser } = newUser;
     return safeUser;
   },
 
@@ -333,8 +471,11 @@ export const dataService = {
   
   resetPassword: async (id: string, pass: string): Promise<void> => {
     const users = getStorage<StoredUser[]>(USERS_KEY, initialUsers);
-    const user = users.find(u => u.id === id);
-    if (user) { user.password = pass; setStorage(USERS_KEY, users); }
+    const userIndex = users.findIndex(u => u.id === id);
+    if (userIndex >= 0) { 
+      users[userIndex].passwordHash = await passwordService.hashPassword(pass);
+      setStorage(USERS_KEY, users); 
+    }
   },
 
   // CONFIGURATION (AGENDA)
@@ -559,8 +700,11 @@ export const dataService = {
     return updatedAppt;
   },
 
-  deleteAppointment: async (id: string): Promise<void> => {
+  deleteAppointment: async (id: string, reason?: string): Promise<void> => {
     await delay(300);
+    if (reason) {
+      console.log(`[Audit] Agendamento ${id} cancelado pelo motivo: ${reason}`);
+    }
     const appts = getStorage<Appointment[]>(APPOINTMENTS_KEY, initialAppointments);
     setStorage(APPOINTMENTS_KEY, appts.filter(a => a.id !== id));
   },

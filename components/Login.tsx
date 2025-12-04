@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { authService } from '../services/mockSupabase';
 import { User } from '../types';
-import { Lock, User as UserIcon, ShieldCheck, Crown, Stethoscope, Calendar } from 'lucide-react';
+import { Lock, User as UserIcon, ShieldCheck, Crown, Stethoscope, Calendar, Briefcase } from 'lucide-react';
 import { useToast } from './ToastProvider';
 
 interface LoginProps {
@@ -139,24 +139,26 @@ export const Login: React.FC<LoginProps> = ({ onLogin }) => {
 
         {/* Quick Access Section */}
         <div className="mt-10 pt-8 border-t border-gray-100">
-          <p className="text-xs text-center text-gray-400 mb-4 font-medium">Acesso Rápido (Ambiente de Teste)</p>
-          <div className="grid grid-cols-3 gap-3">
+          <p className="text-xs text-center text-gray-400 mb-4 font-medium uppercase tracking-wider">Ambiente de Teste (Acesso Rápido)</p>
+          <div className="grid grid-cols-2 gap-3">
             <button
               type="button"
               onClick={() => fillCredentials('admin', '123')}
               className="flex flex-col items-center justify-center p-3 border border-gray-200 rounded-2xl hover:border-amber-400 hover:bg-amber-50 transition-all group bg-white h-24"
             >
-              <Crown size={20} className="text-amber-500 mb-2 group-hover:scale-110 transition-transform" />
-              <span className="text-xs font-semibold text-gray-600 group-hover:text-amber-700">Dono</span>
+              <Crown size={24} className="text-amber-500 mb-2 group-hover:scale-110 transition-transform" />
+              <span className="text-xs font-bold text-gray-700 group-hover:text-amber-700">Dono</span>
+              <span className="text-[10px] text-gray-400">admin</span>
             </button>
 
             <button
               type="button"
-              onClick={() => fillCredentials('medico', '123')}
+              onClick={() => fillCredentials('medicocli', '123')}
               className="flex flex-col items-center justify-center p-3 border border-gray-200 rounded-2xl hover:border-blue-400 hover:bg-blue-50 transition-all group bg-white h-24"
             >
-              <Stethoscope size={20} className="text-gray-400 mb-2 group-hover:text-blue-500 group-hover:scale-110 transition-all" />
-              <span className="text-xs font-semibold text-gray-600 group-hover:text-blue-700">Médico</span>
+              <Briefcase size={24} className="text-blue-500 mb-2 group-hover:scale-110 transition-transform" />
+              <span className="text-xs font-bold text-gray-700 group-hover:text-blue-700">Clínica</span>
+              <span className="text-[10px] text-gray-400">medicocli</span>
             </button>
 
             <button
@@ -164,8 +166,19 @@ export const Login: React.FC<LoginProps> = ({ onLogin }) => {
               onClick={() => fillCredentials('secretaria', '123')}
               className="flex flex-col items-center justify-center p-3 border border-gray-200 rounded-2xl hover:border-rose-400 hover:bg-rose-50 transition-all group bg-white h-24"
             >
-              <Calendar size={20} className="text-rose-500 mb-2 group-hover:scale-110 transition-transform" />
-              <span className="text-xs font-semibold text-gray-600 group-hover:text-rose-700">Secretária</span>
+              <Calendar size={24} className="text-rose-500 mb-2 group-hover:scale-110 transition-transform" />
+              <span className="text-xs font-bold text-gray-700 group-hover:text-rose-700">Secretária</span>
+              <span className="text-[10px] text-gray-400">secretaria</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => fillCredentials('medicocon', '123')}
+              className="flex flex-col items-center justify-center p-3 border border-gray-200 rounded-2xl hover:border-teal-400 hover:bg-teal-50 transition-all group bg-white h-24"
+            >
+              <Stethoscope size={24} className="text-teal-500 mb-2 group-hover:scale-110 transition-transform" />
+              <span className="text-xs font-bold text-gray-700 group-hover:text-teal-700">Consultório</span>
+              <span className="text-[10px] text-gray-400">medicocon</span>
             </button>
           </div>
         </div>

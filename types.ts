@@ -109,6 +109,7 @@ export interface Appointment {
   status: AppointmentStatus;
   procedure?: string; 
   notes?: string;     
+  cancellationReason?: string;
   
   n8nProcessed?: boolean;
   createdAt?: string;
