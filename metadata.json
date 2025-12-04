@@ -1,0 +1,5 @@
+{
+  "name": "MedFlow - CRM da Saúde (N8N Integrated)",
+  "description": "A multi-tenant medical CRM designed as an API-First backend for N8N and Evolution API automations. Features simulating webhook triggers for appointment scheduling, status changes, and patient recovery flows.",
+  "requestFramePermissions": []
+}
