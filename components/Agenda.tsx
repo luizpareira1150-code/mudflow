@@ -5,6 +5,7 @@ import { dataService, authService } from '../services/mockSupabase';
 import { Clock, Plus, AlertCircle, CheckCircle, Settings, X, Save, Lock, CalendarOff, Trash2, User as UserIcon, Phone, Calendar as CalendarIcon, Edit2, FileText, Stethoscope, Tag, ChevronDown } from 'lucide-react';
 import { DatePicker } from './DatePicker';
 import { BookingModal } from './BookingModal';
+import { useToast } from './ToastProvider';
 
 interface AgendaProps {
   user: User;
@@ -21,6 +22,7 @@ export const Agenda: React.FC<AgendaProps> = ({
   onDoctorChange: propOnDoctorChange, 
   isConsultorio 
 }) => {
+  const { showToast } = useToast();
   // Controlled vs Uncontrolled logic (to support standalone usage if needed)
   const isControlled = propDoctors !== undefined;
   const [internalDoctors, setInternalDoctors] = useState<Doctor[]>([]);
@@ -136,8 +138,13 @@ export const Agenda: React.FC<AgendaProps> = ({
         await dataService.deleteAppointment(selectedAppointment.id);
         setIsDetailsModalOpen(false);
         refreshSlots();
+        if (selectedAppointment.status === AppointmentStatus.BLOQUEADO) {
+            showToast('success', 'Horário liberado.');
+        } else {
+            showToast('success', 'Agendamento cancelado.');
+        }
     } catch (error) {
-        alert("Erro ao excluir agendamento.");
+        showToast('error', 'Erro ao excluir.');
     } finally {
         setLoading(false);
         setIsDeleteConfirming(false);
@@ -156,9 +163,9 @@ export const Agenda: React.FC<AgendaProps> = ({
       });
       setIsDetailsModalOpen(false);
       refreshSlots();
-      alert("Alterações salvas com sucesso!");
+      showToast('success', 'Consulta remarcada com sucesso!');
     } catch (error: any) {
-      alert(error.message || "Erro ao atualizar.");
+      showToast('error', error.message || 'Erro ao atualizar.');
     }
   };
 
@@ -191,8 +198,9 @@ export const Agenda: React.FC<AgendaProps> = ({
       await dataService.createBatchAppointments(newBlockAppointments);
       setIsBlockModalOpen(false);
       refreshSlots();
+      showToast('warning', `${newBlockAppointments.length} horários bloqueados com sucesso.`);
     } catch (error) {
-      alert('Erro ao fechar agenda.');
+      showToast('error', 'Erro ao fechar agenda.');
     }
   };
 
@@ -218,7 +226,10 @@ export const Agenda: React.FC<AgendaProps> = ({
       e.preventDefault();
       try {
         const isValid = await authService.verifyPassword(confirmPassword);
-        if (!isValid) { alert('Senha incorreta.'); return; }
+        if (!isValid) { 
+            showToast('error', 'Senha incorreta.');
+            return; 
+        }
         
         const configToSave = { ...tempConfig, doctorId: selectedDoctorId };
         await dataService.updateAgendaConfig(configToSave);
@@ -231,8 +242,11 @@ export const Agenda: React.FC<AgendaProps> = ({
         setIsConfigOpen(false);
         setIsPasswordModalOpen(false);
         refreshSlots();
+        showToast('success', 'Configurações de agenda salvas!');
 
-      } catch (e) { alert('Erro.'); }
+      } catch (e) { 
+          showToast('error', 'Erro ao salvar configurações.');
+      }
   };
 
   const formatDuration = (mins: number) => {
@@ -485,7 +499,7 @@ export const Agenda: React.FC<AgendaProps> = ({
                             
                             <div className="space-y-4">
                                 <div>
-                                    <label className="block text-xs text-gray-500 mb-1">Procedimento</label>
+                                    <label className="block text-xs text-gray-500 mb-1">Tipo de Consulta</label>
                                     <div className="relative">
                                         <Stethoscope size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
                                         <select

@@ -1,14 +1,20 @@
+
+
 import React, { useState, useEffect } from 'react';
 import { User, UserRole, ClinicSettings, Doctor, Organization, AccountType } from '../types';
 import { dataService, authService } from '../services/mockSupabase';
-import { Users, Building2, UserPlus, KeyRound, Trash2, RefreshCw, AlertTriangle, X, Webhook, MessageSquare, Save, Link2, Lock, Eye, EyeOff, Stethoscope, ShieldCheck } from 'lucide-react';
+import Automations from './Automations';
+import { Users, Building2, UserPlus, KeyRound, Trash2, RefreshCw, AlertTriangle, X, Webhook, MessageSquare, Save, Link2, Lock, Eye, EyeOff, Stethoscope, ShieldCheck, Workflow, Copy, Shield, CheckCircle, Zap } from 'lucide-react';
+import { useToast } from './ToastProvider';
+import { generateApiToken } from '../services/n8nIntegration';
 
 interface AdminProps {
   user: User;
 }
 
 const Admin: React.FC<AdminProps> = ({ user: currentUser }) => {
-  const [activeTab, setActiveTab] = useState<'team' | 'doctors' | 'integrations'>('team');
+  const { showToast } = useToast();
+  const [activeTab, setActiveTab] = useState<'team' | 'doctors' | 'integrations' | 'automations'>('team');
 
   // --- TEAM STATE ---
   const [users, setUsers] = useState<User[]>([]);
@@ -33,6 +39,7 @@ const Admin: React.FC<AdminProps> = ({ user: currentUser }) => {
   const [settings, setSettings] = useState<ClinicSettings>({ clinicId: currentUser.clinicId });
   const [settingsLoading, setSettingsLoading] = useState(false);
   const [showApiKey, setShowApiKey] = useState(false);
+  const [tokenCopied, setTokenCopied] = useState(false);
 
   // Modal States
   const [deleteModal, setDeleteModal] = useState<{ isOpen: boolean; user: User | null; doctor: Doctor | null }>({ isOpen: false, user: null, doctor: null });
@@ -109,9 +116,9 @@ const Admin: React.FC<AdminProps> = ({ user: currentUser }) => {
           name: '', email: '', username: '', password: '', role: UserRole.SECRETARY,
           accountType: AccountType.CONSULTORIO, organizationName: ''
       });
-      alert('Usuário criado com sucesso!');
+      showToast('success', 'Usuário criado com sucesso!');
     } catch (error: any) {
-      alert(error.message || 'Erro ao criar usuário');
+      showToast('error', error.message || 'Erro ao criar usuário');
     }
   };
 
@@ -121,7 +128,7 @@ const Admin: React.FC<AdminProps> = ({ user: currentUser }) => {
       if (!currentOrganization) return;
       
       if (currentOrganization.maxDoctors <= doctors.length) {
-          alert('Limite de médicos atingido para esta conta.');
+          showToast('error', `Limite de médicos atingido (${currentOrganization.maxDoctors}).`);
           return;
       }
 
@@ -134,9 +141,9 @@ const Admin: React.FC<AdminProps> = ({ user: currentUser }) => {
           });
           await loadData();
           setNewDoctor({ name: '', specialty: 'Clínico Geral', color: 'blue' });
-          alert('Médico adicionado à equipe!');
+          showToast('success', 'Médico adicionado à equipe!');
       } catch (error) {
-          alert('Erro ao adicionar médico.');
+          showToast('error', 'Erro ao adicionar médico.');
       }
   };
 
@@ -152,19 +159,34 @@ const Admin: React.FC<AdminProps> = ({ user: currentUser }) => {
     try {
         const isValid = await authService.verifyPassword(securityPassword);
         if (!isValid) {
-            alert("Senha incorreta. Acesso negado.");
+            showToast('error', "Senha incorreta. Acesso negado.");
             return;
         }
 
         setIsSecurityModalOpen(false);
         setSettingsLoading(true);
         await dataService.updateClinicSettings(settings);
-        alert('Configurações salvas!');
+        showToast('success', 'Configurações de integração salvas!');
     } catch (error) {
-        alert('Erro ao salvar dados.');
+        showToast('error', 'Erro ao salvar configurações.');
     } finally {
         setSettingsLoading(false);
     }
+  };
+
+  const handleCopyApiToken = () => {
+    if (settings.apiToken) {
+        navigator.clipboard.writeText(settings.apiToken);
+        setTokenCopied(true);
+        setTimeout(() => setTokenCopied(false), 2000);
+        showToast('success', 'Token de API copiado!');
+    }
+  };
+  
+  const handleGenerateToken = () => {
+    const newToken = generateApiToken(currentUser.clinicId);
+    setSettings({...settings, apiToken: newToken});
+    showToast('info', 'Novo token gerado. Clique em Salvar para persistir.');
   };
 
   // --- DELETE LOGIC ---
@@ -173,13 +195,15 @@ const Admin: React.FC<AdminProps> = ({ user: currentUser }) => {
     try {
       if (deleteModal.user) {
           await dataService.deleteUser(deleteModal.user.id);
+          showToast('success', 'Usuário removido.');
       } else if (deleteModal.doctor) {
           await dataService.deleteDoctor(deleteModal.doctor.id);
+          showToast('success', 'Médico removido.');
       }
       await loadData();
       setDeleteModal({ isOpen: false, user: null, doctor: null });
     } catch (error) {
-      alert('Erro ao excluir.');
+      showToast('error', 'Erro ao excluir.');
     } finally {
       setActionLoading(false);
     }
@@ -192,9 +216,9 @@ const Admin: React.FC<AdminProps> = ({ user: currentUser }) => {
     try {
       await dataService.resetPassword(resetModal.user.id, newPassword);
       setResetModal({ isOpen: false, user: null });
-      alert(`Senha alterada com sucesso!`);
+      showToast('success', `Senha de ${resetModal.user.name} alterada!`);
     } catch (error) {
-      alert('Erro ao resetar senha.');
+      showToast('error', 'Erro ao resetar senha.');
     } finally {
       setActionLoading(false);
     }
@@ -202,13 +226,14 @@ const Admin: React.FC<AdminProps> = ({ user: currentUser }) => {
 
   // Check Limit for Secretaries
   const secretaryCount = users.filter(u => u.role === UserRole.SECRETARY).length;
-  const isLimitReached = currentUser.role === UserRole.DOCTOR_ADMIN && secretaryCount >= 2;
+  const maxSecretaries = currentOrganization?.accountType === AccountType.CLINICA ? 5 : 2;
+  const isLimitReached = currentUser.role === UserRole.DOCTOR_ADMIN && secretaryCount >= maxSecretaries;
 
   // Check Permissions for Tabs
   const canViewDoctors = currentUser.role === UserRole.DOCTOR_ADMIN && currentOrganization?.accountType === AccountType.CLINICA;
 
   return (
-    <div className="max-w-4xl mx-auto pb-10 relative p-8 animate-in fade-in duration-500">
+    <div className={`mx-auto pb-10 relative p-8 animate-in fade-in duration-500 ${activeTab === 'automations' ? 'max-w-6xl' : 'max-w-4xl'}`}>
       <div className="mb-6">
         <h2 className="text-3xl font-bold text-gray-800">Painel Administrativo</h2>
         <div className="flex items-center gap-2 text-gray-500 mt-1">
@@ -244,14 +269,24 @@ const Admin: React.FC<AdminProps> = ({ user: currentUser }) => {
         )}
 
         {currentUser.role !== UserRole.OWNER && (
-            <button
-            onClick={() => setActiveTab('integrations')}
-            className={`flex items-center gap-2 px-6 py-2.5 rounded-lg text-sm font-medium transition-all whitespace-nowrap
-                ${activeTab === 'integrations' ? 'bg-white text-purple-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
-            >
-            <Webhook size={18} />
-            Integrações (API)
-            </button>
+            <>
+                <button
+                onClick={() => setActiveTab('integrations')}
+                className={`flex items-center gap-2 px-6 py-2.5 rounded-lg text-sm font-medium transition-all whitespace-nowrap
+                    ${activeTab === 'integrations' ? 'bg-white text-purple-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+                >
+                <Webhook size={18} />
+                Integrações (API)
+                </button>
+                <button
+                onClick={() => setActiveTab('automations')}
+                className={`flex items-center gap-2 px-6 py-2.5 rounded-lg text-sm font-medium transition-all whitespace-nowrap
+                    ${activeTab === 'automations' ? 'bg-white text-slate-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+                >
+                <Workflow size={18} />
+                Automação
+                </button>
+            </>
         )}
       </div>
 
@@ -361,7 +396,7 @@ const Admin: React.FC<AdminProps> = ({ user: currentUser }) => {
                 {isLimitReached && (
                     <div className="bg-red-50 p-3 rounded-lg text-xs text-red-600 border border-red-100 mt-2 flex items-start gap-2">
                         <AlertTriangle size={16} className="shrink-0 mt-0.5" />
-                        <span>Limite de contas atingido. Você já possui 2 secretárias.</span>
+                        <span>Limite de contas atingido. Você já possui {maxSecretaries} secretárias.</span>
                     </div>
                 )}
 
@@ -556,6 +591,47 @@ const Admin: React.FC<AdminProps> = ({ user: currentUser }) => {
                 </div>
 
                 <form onSubmit={initiateSaveSettings} className="space-y-6">
+                    {/* API Token Section */}
+                    <div className="p-4 bg-orange-50 rounded-xl border border-orange-100">
+                        <h4 className="font-bold text-orange-800 flex items-center gap-2 mb-4 text-sm uppercase tracking-wide">
+                            <Shield size={16} /> Token de API (Autenticação)
+                        </h4>
+                        
+                        <p className="text-xs text-orange-700 mb-3">
+                            Este token permite que o N8N envie dados DE VOLTA para o sistema (criar agendamentos via WhatsApp, por exemplo).
+                        </p>
+                        
+                        <div className="flex gap-2 mb-3">
+                            <input 
+                            type="text"
+                            value={settings.apiToken || 'Clique em "Gerar Token" para criar'}
+                            disabled
+                            className="flex-1 border border-orange-200 bg-white text-gray-900 rounded-lg px-3 py-2 text-sm font-mono"
+                            />
+                            <button
+                            type="button"
+                            onClick={handleCopyApiToken}
+                            disabled={!settings.apiToken}
+                            className="px-3 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                            title="Copiar Token"
+                            >
+                            {tokenCopied ? <CheckCircle size={18} /> : <Copy size={18} />}
+                            </button>
+                            <button
+                            type="button"
+                            onClick={handleGenerateToken}
+                            className="px-3 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition-colors"
+                            title="Gerar Novo Token"
+                            >
+                            <RefreshCw size={18} />
+                            </button>
+                        </div>
+                        
+                        <div className="bg-white/50 p-3 rounded text-xs text-orange-600 border border-orange-100/50">
+                            <strong>⚠️ Segurança:</strong> Não compartilhe este token publicamente. Ele permite que o N8N faça alterações no seu sistema.
+                        </div>
+                    </div>
+
                     {/* Evolution API Section */}
                     <div className="p-4 bg-green-50 rounded-xl border border-green-100">
                         <h4 className="font-bold text-green-800 flex items-center gap-2 mb-4 text-sm uppercase tracking-wide">
@@ -597,7 +673,7 @@ const Admin: React.FC<AdminProps> = ({ user: currentUser }) => {
                     {/* N8N Section */}
                     <div className="p-4 bg-purple-50 rounded-xl border border-purple-100">
                         <h4 className="font-bold text-purple-800 flex items-center gap-2 mb-4 text-sm uppercase tracking-wide">
-                            <Link2 size={16} /> Webhook N8N
+                            <Link2 size={16} /> Webhook N8N (Saída)
                         </h4>
                         <div>
                             <label className="block text-xs font-bold text-gray-600 uppercase mb-1">Webhook URL</label>
@@ -607,6 +683,56 @@ const Admin: React.FC<AdminProps> = ({ user: currentUser }) => {
                                 onChange={e => setSettings({...settings, n8nWebhookUrl: e.target.value})}
                                 className="w-full border border-gray-200 bg-white text-gray-900 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-purple-500"
                             />
+                        </div>
+
+                         {/* Toggle Modo de Produção */}
+                        <div className="p-4 bg-blue-50 rounded-xl border border-blue-100 mt-4">
+                        <div className="flex items-center justify-between mb-3">
+                            <div>
+                            <h4 className="font-bold text-blue-800 text-sm uppercase tracking-wide flex items-center gap-2">
+                                <Zap size={16} /> Modo de Operação
+                            </h4>
+                            <p className="text-xs text-blue-600 mt-1">
+                                {settings.n8nProductionMode 
+                                ? 'Webhooks estão sendo enviados REALMENTE para o N8N' 
+                                : 'Webhooks estão sendo simulados (apenas logs no console)'}
+                            </p>
+                            </div>
+                            
+                            <button
+                            type="button"
+                            onClick={() => setSettings({...settings, n8nProductionMode: !settings.n8nProductionMode})}
+                            className={`relative inline-flex h-8 w-14 items-center rounded-full transition-colors ${
+                                settings.n8nProductionMode ? 'bg-green-500' : 'bg-gray-300'
+                            }`}
+                            >
+                            <span
+                                className={`inline-block h-6 w-6 transform rounded-full bg-white transition-transform ${
+                                settings.n8nProductionMode ? 'translate-x-7' : 'translate-x-1'
+                                }`}
+                            />
+                            </button>
+                        </div>
+                        
+                        <div className="grid grid-cols-2 gap-2 text-xs">
+                            <div className={`p-2 rounded ${!settings.n8nProductionMode ? 'bg-white border-2 border-blue-400' : 'bg-white/50'}`}>
+                            <p className="font-bold text-blue-800">🧪 Desenvolvimento</p>
+                            <p className="text-blue-600 text-[10px] mt-1">Logs no console, sem envio real</p>
+                            </div>
+                            <div className={`p-2 rounded ${settings.n8nProductionMode ? 'bg-white border-2 border-green-400' : 'bg-white/50'}`}>
+                            <p className="font-bold text-green-800">🚀 Produção</p>
+                            <p className="text-green-600 text-[10px] mt-1">Envia webhooks reais ao N8N</p>
+                            </div>
+                        </div>
+                        
+                        {settings.n8nProductionMode && (
+                            <div className="mt-3 p-2 bg-yellow-50 border border-yellow-200 rounded text-xs text-yellow-800 flex items-start gap-2">
+                            <AlertTriangle size={14} className="mt-0.5 flex-shrink-0" />
+                            <span>
+                                <strong>Atenção:</strong> Certifique-se de que a URL do webhook está correta e o N8N está configurado antes de ativar o modo produção.
+                            </span>
+                            </div>
+                        )}
                         </div>
                     </div>
 
@@ -622,6 +748,13 @@ const Admin: React.FC<AdminProps> = ({ user: currentUser }) => {
                     </div>
                 </form>
              </div>
+        </div>
+      )}
+
+      {/* --- TAB: AUTOMATIONS --- */}
+      {activeTab === 'automations' && (
+        <div className="animate-in fade-in slide-in-from-right-4 duration-300">
+            <Automations />
         </div>
       )}
 

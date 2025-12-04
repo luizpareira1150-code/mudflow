@@ -1,4 +1,7 @@
+
+
 import { User, UserRole, Appointment, AppointmentStatus, AgendaConfig, ClinicSettings, Doctor, AvailableSlot, Organization, AccountType } from '../types';
+import { N8NIntegrationService, N8NOutgoingPayload, generateApiToken } from './n8nIntegration';
 
 interface StoredUser extends User {
   password?: string;
@@ -8,7 +11,7 @@ interface StoredUser extends User {
 const MOCK_CLINIC_ID = 'clinic_123';
 
 const initialOrganizations: Organization[] = [
-  { id: MOCK_CLINIC_ID, accountType: AccountType.CLINICA, name: 'Clínica Exemplo', ownerUserId: 'owner_001', maxDoctors: 999 }
+  { id: MOCK_CLINIC_ID, accountType: AccountType.CLINICA, name: 'Clínica Exemplo', ownerUserId: 'owner_001', maxDoctors: 25 }
 ];
 
 const initialUsers: StoredUser[] = [
@@ -36,8 +39,11 @@ const initialSettings: ClinicSettings[] = [
   { 
     clinicId: MOCK_CLINIC_ID, 
     n8nWebhookUrl: 'https://n8n.example.com/webhook',
+    n8nProductionMode: false,
     evolutionInstanceName: 'instance_1',
-    evolutionApiKey: 'token_123'
+    evolutionApiKey: 'token_123',
+    clinicToken: 'clinic_abc123_xyz789',
+    apiToken: 'medflow_demo_token_123'
   }
 ];
 
@@ -85,17 +91,75 @@ const setStorage = <T>(key: string, data: T) => {
 
 // --- N8N SIMULATION SERVICE ---
 export const n8nService = {
-  triggerWebhook: async (event: string, payload: any, description: string) => {
-    const clinicId = payload.clinicId || 'global';
+  triggerWebhook: async (
+    event: N8NOutgoingPayload['event'],
+    data: any,
+    description: string
+  ) => {
+    // 1. Buscar configurações da clínica
+    const clinicId = data.clinicId || 'global';
     const settingsList = getStorage<ClinicSettings[]>(CLINIC_SETTINGS_KEY, initialSettings);
     const settings = settingsList.find(s => s.clinicId === clinicId);
-    const webhookUrl = settings?.n8nWebhookUrl || 'NOT_CONFIGURED';
     
-    console.group(`🚀 [N8N Webhook Simulation]`);
-    console.log(`%cTarget: ${webhookUrl}`, 'color: gray; font-size: 0.8em;');
-    console.log(`%cEvent: ${event}`, 'color: #3b82f6; font-weight: bold;');
-    console.log(`%cPayload (sent to N8N):`, 'color: #10b981;', payload);
-    console.groupEnd();
+    if (!settings) {
+      console.warn(`[N8N] Configurações não encontradas para clínica ${clinicId}`);
+      return;
+    }
+    
+    // 2. Buscar dados do médico
+    const doctors = getStorage<Doctor[]>(DOCTORS_KEY, initialDoctors);
+    const doctor = doctors.find(d => d.id === data.doctorId) || doctors[0];
+    
+    // 3. Buscar organização
+    const orgs = getStorage<Organization[]>(ORGS_KEY, initialOrganizations);
+    const org = orgs.find(o => o.id === clinicId);
+    
+    // 4. Montar payload completo
+    const payload: N8NOutgoingPayload = {
+      event,
+      data: {
+        appointmentId: data.id,
+        patientName: data.patientName,
+        patientPhone: data.patientPhone,
+        date: data.date,
+        time: data.time,
+        status: data.status,
+        oldStatus: data.oldStatus,
+        procedure: data.procedure || data.reason,
+        notes: data.notes,
+        doctorId: data.doctorId,
+        doctorName: doctor?.name || 'Médico',
+        doctorSpecialty: doctor?.specialty,
+        clinicId,
+        clinicName: org?.name || 'Clínica',
+        blockedSlotsCount: data.count,
+        userId: data.userId,
+        email: data.email,
+        username: data.username,
+        requestTime: data.requestTime
+      },
+      context: {
+        evolutionApi: {
+          instanceName: settings.evolutionInstanceName || '',
+          apiKey: settings.evolutionApiKey || '',
+          baseUrl: 'https://evolution-api.com' 
+        },
+        clinic: {
+          id: clinicId,
+          name: org?.name || 'Clínica',
+          timezone: 'America/Sao_Paulo'
+        },
+        doctor: {
+          id: doctor?.id || '',
+          name: doctor?.name || 'Médico',
+          specialty: doctor?.specialty || 'Clínico Geral'
+        },
+        timestamp: new Date().toISOString()
+      }
+    };
+    
+    // 5. Enviar para N8N
+    await N8NIntegrationService.sendToN8N(payload, settings);
   }
 };
 
@@ -172,12 +236,20 @@ export const dataService = {
     const newDoctor = { ...doctor, id: `doc_${Date.now()}` };
     doctors.push(newDoctor);
     setStorage(DOCTORS_KEY, doctors);
+    
+    n8nService.triggerWebhook('DOCTOR_CREATED', {
+        doctorId: newDoctor.id,
+        doctorName: newDoctor.name,
+        clinicId: doctor.organizationId
+    }, 'Doctor Created');
+
     return newDoctor;
   },
 
   deleteDoctor: async (doctorId: string): Promise<void> => {
     await delay(300);
     let doctors = getStorage<Doctor[]>(DOCTORS_KEY, initialDoctors);
+    const doc = doctors.find(d => d.id === doctorId);
     doctors = doctors.filter(d => d.id !== doctorId);
     setStorage(DOCTORS_KEY, doctors);
     
@@ -190,6 +262,14 @@ export const dataService = {
     let configs = getStorage<AgendaConfig[]>(AGENDA_CONFIG_KEY, initialAgendaConfigs);
     configs = configs.filter(c => c.doctorId !== doctorId);
     setStorage(AGENDA_CONFIG_KEY, configs);
+
+    if (doc) {
+        n8nService.triggerWebhook('DOCTOR_DELETED', {
+            doctorId: doc.id,
+            doctorName: doc.name,
+            clinicId: doc.organizationId
+        }, 'Doctor Deleted');
+    }
   },
 
   // USERS
@@ -204,9 +284,16 @@ export const dataService = {
     await delay(300);
     const users = getStorage<StoredUser[]>(USERS_KEY, initialUsers);
     if (users.some(u => u.username === user.username)) throw new Error("Nome de usuário já existe.");
+    
     if (user.role === UserRole.SECRETARY) {
+        const orgs = getStorage<Organization[]>(ORGS_KEY, initialOrganizations);
+        const org = orgs.find(o => o.id === user.clinicId);
+        
+        // Dynamic limit: 5 for Clinics, 2 for Consultorios (default)
+        const maxSecretaries = org?.accountType === AccountType.CLINICA ? 5 : 2;
+        
         const count = users.filter(u => u.clinicId === user.clinicId && u.role === UserRole.SECRETARY).length;
-        if (count >= 2) throw new Error("Limite atingido: Você só pode criar até 2 contas de secretária.");
+        if (count >= maxSecretaries) throw new Error(`Limite atingido: Você só pode criar até ${maxSecretaries} contas de secretária.`);
     }
     
     const newUser = { ...user, id: Math.random().toString(36).substr(2, 9) };
@@ -220,7 +307,7 @@ export const dataService = {
             accountType: user.accountType,
             name: user.organizationName,
             ownerUserId: newUser.id,
-            maxDoctors: user.accountType === AccountType.CONSULTORIO ? 1 : 999
+            maxDoctors: user.accountType === AccountType.CONSULTORIO ? 1 : 25
         });
         setStorage(ORGS_KEY, orgs);
         
@@ -287,11 +374,26 @@ export const dataService = {
 
   getClinicSettings: async (clinicId: string): Promise<ClinicSettings> => {
     const settings = getStorage<ClinicSettings[]>(CLINIC_SETTINGS_KEY, initialSettings);
-    return settings.find(s => s.clinicId === clinicId) || { clinicId };
+    let clinicSetting = settings.find(s => s.clinicId === clinicId);
+    
+    if (!clinicSetting) {
+        // Initialize default if not found
+        clinicSetting = { clinicId, clinicToken: `clinic_${Date.now()}` };
+        settings.push(clinicSetting);
+        setStorage(CLINIC_SETTINGS_KEY, settings);
+    }
+    return clinicSetting;
   },
 
   updateClinicSettings: async (newSettings: ClinicSettings): Promise<void> => {
     await delay(300);
+    
+    // Auto-generate Token if missing
+    if (!newSettings.apiToken) {
+      newSettings.apiToken = generateApiToken(newSettings.clinicId);
+      console.log(`[Sistema] Token de API gerado automaticamente para ${newSettings.clinicId}`);
+    }
+
     let settings = getStorage<ClinicSettings[]>(CLINIC_SETTINGS_KEY, initialSettings);
     const index = settings.findIndex(s => s.clinicId === newSettings.clinicId);
     if (index >= 0) settings[index] = newSettings;
@@ -369,15 +471,11 @@ export const dataService = {
     appts.push(newAppt);
     setStorage(APPOINTMENTS_KEY, appts);
 
-    const doctors = getStorage<Doctor[]>(DOCTORS_KEY, initialDoctors);
-    const doctor = doctors.find(d => d.id === appt.doctorId);
-    const doctorName = doctor ? doctor.name : 'Clínica';
-
     n8nService.triggerWebhook('APPOINTMENT_CREATED', {
         ...newAppt,
         reason: appt.procedure,
-        doctorName: doctorName
-    }, 'Sending WhatsApp Confirmation');
+        doctorName: appt.doctorId // Will be resolved in n8nService
+    }, 'Appointment Created');
     
     return newAppt;
   },
@@ -405,15 +503,12 @@ export const dataService = {
     setStorage(APPOINTMENTS_KEY, appts);
     
     if (created.length > 0) {
-        const doctors = getStorage<Doctor[]>(DOCTORS_KEY, initialDoctors);
-        const doctor = doctors.find(d => d.id === created[0].doctorId);
-        
         n8nService.triggerWebhook('AGENDA_BLOCKED', { 
             count: addedCount,
-            doctorName: doctor?.name,
+            doctorId: created[0].doctorId,
             date: created[0].date,
             clinicId: created[0].clinicId
-        }, 'Updating calendars');
+        }, 'Agenda Blocked');
     }
   },
 
@@ -428,16 +523,12 @@ export const dataService = {
     setStorage(APPOINTMENTS_KEY, appts);
     
     const updatedAppt = appts[index];
-    const doctors = getStorage<Doctor[]>(DOCTORS_KEY, initialDoctors);
-    const doctor = doctors.find(d => d.id === updatedAppt.doctorId);
-    const doctorName = doctor ? doctor.name : 'Clínica';
 
     n8nService.triggerWebhook('STATUS_CHANGED', { 
         ...updatedAppt, 
         reason: updatedAppt.procedure,
-        doctorName,
         oldStatus 
-    }, 'Status Update Workflow');
+    }, 'Status Update');
     
     return updatedAppt;
   },
@@ -500,5 +591,30 @@ export const dataService = {
       onUpdate(appts);
     }, 3000);
     return () => clearInterval(interval);
+  }
+};
+
+// --- INBOUND WEBHOOK SERVICE ---
+export const webhookService = {
+  receiveFromN8N: async (payload: {
+    action: 'CREATE_APPOINTMENT' | 'UPDATE_STATUS' | 'BLOCK_SCHEDULE' | 'CREATE_PATIENT_CONTACT';
+    data: any;
+    clinicId: string;
+    authToken: string;
+  }) => {
+    await delay(200);
+    
+    // Validate Token and Process via N8NIntegrationService
+    const settings = await dataService.getClinicSettings(payload.clinicId);
+    
+    // Construct Valid Tokens Map for Service
+    const validTokens = new Map<string, string>();
+    if (settings.apiToken) validTokens.set(payload.clinicId, settings.apiToken);
+    
+    // Fallback to old token if new one not present (migration support)
+    if (!settings.apiToken && settings.clinicToken) validTokens.set(payload.clinicId, settings.clinicToken);
+
+    // Pass dataService to avoid circular dependency issues in N8NIntegrationService
+    return await N8NIntegrationService.receiveFromN8N(payload as any, validTokens, dataService);
   }
 };

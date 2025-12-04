@@ -53,11 +53,11 @@ const Automations: React.FC = () => {
   };
 
   return (
-    <div className="p-8 h-screen flex flex-col animate-in fade-in duration-500">
-      <header className="mb-8">
-        <h2 className="text-3xl font-bold text-slate-800">Automation Simulator</h2>
+    <div className="flex flex-col h-[700px] animate-in fade-in duration-500">
+      <header className="mb-6">
+        <h2 className="text-2xl font-bold text-slate-800">Simulador de Automação</h2>
         <p className="text-slate-500 mt-1">
-          Test N8N & Evolution API triggers by simulating system events.
+          Teste gatilhos N8N & Evolution API simulando eventos do sistema.
         </p>
       </header>
 

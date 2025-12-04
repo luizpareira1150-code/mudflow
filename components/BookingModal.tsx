@@ -1,8 +1,10 @@
+
 import React, { useState, useEffect } from 'react';
 import { User, Doctor, AvailableSlot, AppointmentStatus } from '../types';
 import { dataService } from '../services/mockSupabase';
 import { DatePicker } from './DatePicker';
-import { X, Check, AlertCircle, Phone, User as UserIcon, Calendar, Clock } from 'lucide-react';
+import { X, Check, AlertCircle, Phone, User as UserIcon, Calendar, Clock, ChevronDown } from 'lucide-react';
+import { useToast } from './ToastProvider';
 
 interface BookingModalProps {
   isOpen: boolean;
@@ -23,6 +25,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
   preSelectedTime,
   preSelectedDoctorId
 }) => {
+  const { showToast } = useToast();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   
@@ -59,6 +62,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
       setSelectedTime(preSelectedTime || '');
       setPatientName('');
       setPatientPhone('');
+      setProcedure(''); // Ensure procedure is blank
       setNotes('');
       setError('');
       setLoading(false);
@@ -76,10 +80,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
         setSlots(fetchedSlots);
         setProcedures(fetchedProcs);
         
-        // Auto-select procedure if empty
-        if(fetchedProcs.length > 0 && !procedure) setProcedure(fetchedProcs[0]);
-        
-        // If we have a preSelectedTime, ensure it is still valid/visible, otherwise clear it if it's not in the new slot list (optional strictness)
+        // Ensure procedure remains empty unless explicitly selected by user
         setLoading(false);
       });
     }
@@ -89,11 +90,13 @@ export const BookingModal: React.FC<BookingModalProps> = ({
     e.preventDefault();
     if (!selectedDoctor || !date || !selectedTime || !patientName || !patientPhone) {
       setError("Por favor, preencha todos os campos obrigatórios.");
+      showToast('error', "Preencha todos os campos obrigatórios.");
       return;
     }
 
     setLoading(true);
     setError('');
+    showToast('info', 'Criando agendamento...', 1500);
 
     try {
       await dataService.createAppointment({
@@ -108,10 +111,12 @@ export const BookingModal: React.FC<BookingModalProps> = ({
         procedure: procedure || 'Consulta',
         notes
       });
+      showToast('success', 'Agendamento criado! Paciente será notificado via WhatsApp.');
       onSuccess();
       onClose();
     } catch (err: any) {
       setError(err.message || "Erro ao criar agendamento.");
+      showToast('error', 'Erro ao agendar.');
       setLoading(false);
     }
   };
@@ -142,17 +147,20 @@ export const BookingModal: React.FC<BookingModalProps> = ({
           <div className="grid grid-cols-2 gap-4">
             <div className="col-span-2 sm:col-span-1">
               <label className="block text-sm font-medium text-slate-700 mb-1.5">Profissional</label>
-              <select 
-                value={selectedDoctor}
-                onChange={(e) => setSelectedDoctor(e.target.value)}
-                disabled={!!preSelectedDoctorId} // Disable if passed from grid context
-                className={`w-full px-3 py-2.5 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-slate-700 appearance-none ${preSelectedDoctorId ? 'bg-slate-50 text-slate-500' : ''}`}
-              >
-                <option value="">Selecione...</option>
-                {doctors.map(doc => (
-                  <option key={doc.id} value={doc.id}>{doc.name}</option>
-                ))}
-              </select>
+              <div className="relative">
+                <select 
+                    value={selectedDoctor}
+                    onChange={(e) => setSelectedDoctor(e.target.value)}
+                    disabled={!!preSelectedDoctorId} // Disable if passed from grid context
+                    className={`w-full pl-3 pr-8 py-2.5 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-slate-700 appearance-none ${preSelectedDoctorId ? 'bg-slate-50 text-slate-500' : ''}`}
+                >
+                    <option value="">Selecione...</option>
+                    {doctors.map(doc => (
+                    <option key={doc.id} value={doc.id}>{doc.name}</option>
+                    ))}
+                </select>
+                <ChevronDown size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+              </div>
             </div>
             
             <div className="col-span-2 sm:col-span-1">
@@ -210,7 +218,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                   value={patientName}
                   onChange={e => setPatientName(e.target.value)}
                   placeholder="Nome completo"
-                  className="w-full pl-10 pr-4 py-2.5 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none transition-all"
+                  className="w-full pl-10 pr-4 py-2.5 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none transition-all"
                 />
               </div>
             </div>
@@ -225,19 +233,23 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                         value={patientPhone}
                         onChange={e => setPatientPhone(e.target.value)}
                         placeholder="(11) 99999-9999"
-                        className="w-full pl-10 pr-4 py-2.5 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none transition-all"
+                        className="w-full pl-10 pr-4 py-2.5 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none transition-all"
                         />
                     </div>
                 </div>
                 <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-1.5">Procedimento</label>
-                    <select
-                        value={procedure}
-                        onChange={e => setProcedure(e.target.value)}
-                        className="w-full px-3 py-2.5 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-slate-700"
-                    >
-                        {procedures.map(p => <option key={p} value={p}>{p}</option>)}
-                    </select>
+                    <label className="block text-sm font-medium text-slate-700 mb-1.5">Tipo de Consulta</label>
+                    <div className="relative">
+                        <select
+                            value={procedure}
+                            onChange={e => setProcedure(e.target.value)}
+                            className="w-full pl-3 pr-8 py-2.5 bg-white appearance-none border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-slate-700"
+                        >
+                            <option value="">Selecione...</option>
+                            {procedures.map(p => <option key={p} value={p}>{p}</option>)}
+                        </select>
+                        <ChevronDown size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+                    </div>
                 </div>
             </div>
 
@@ -247,7 +259,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                   value={notes}
                   onChange={e => setNotes(e.target.value)}
                   rows={2}
-                  className="w-full px-4 py-2.5 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none transition-all resize-none"
+                  className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none transition-all resize-none"
                   placeholder="Detalhes adicionais..."
                 />
             </div>

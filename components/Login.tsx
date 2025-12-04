@@ -2,12 +2,14 @@ import React, { useState } from 'react';
 import { authService } from '../services/mockSupabase';
 import { User } from '../types';
 import { Lock, User as UserIcon, ShieldCheck, Crown, Stethoscope, Calendar } from 'lucide-react';
+import { useToast } from './ToastProvider';
 
 interface LoginProps {
   onLogin: (user: User) => void;
 }
 
 export const Login: React.FC<LoginProps> = ({ onLogin }) => {
+  const { showToast } = useToast();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -24,11 +26,29 @@ export const Login: React.FC<LoginProps> = ({ onLogin }) => {
         onLogin(user);
       } else {
         setError('Credenciais inválidas.');
+        showToast('error', 'Usuário ou senha incorretos.');
       }
     } catch (err) {
       setError('Erro ao conectar.');
+      showToast('error', 'Erro de conexão com o servidor.');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleRecovery = async () => {
+    // Simulating recovery flow logic since backend is mock
+    if (!username) {
+        showToast('warning', 'Digite seu usuário para recuperar a senha.');
+        return;
+    }
+    showToast('info', 'Enviando solicitação...', 1000);
+    try {
+        await new Promise(resolve => setTimeout(resolve, 1500)); // Mock delay
+        // In a real app we would call authService.recoverPassword(username)
+        showToast('success', 'Link de recuperação enviado! Verifique seu WhatsApp/Email.');
+    } catch (e) {
+        showToast('error', 'Erro ao enviar link de recuperação.');
     }
   };
 
@@ -87,7 +107,11 @@ export const Login: React.FC<LoginProps> = ({ onLogin }) => {
 
           {/* Forgot Password Link */}
           <div className="flex justify-end pt-1">
-            <button type="button" className="text-sm font-semibold text-blue-600 hover:text-blue-700 transition-colors">
+            <button 
+                type="button" 
+                onClick={handleRecovery}
+                className="text-sm font-semibold text-blue-600 hover:text-blue-700 transition-colors"
+            >
               Esqueceu a senha?
             </button>
           </div>

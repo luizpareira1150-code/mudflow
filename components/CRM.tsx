@@ -4,6 +4,7 @@ import { Appointment, AppointmentStatus, User, Column, Doctor } from '../types';
 import { dataService } from '../services/mockSupabase';
 import { Phone, User as UserIcon, Edit2, X, Save, Trash2, Calendar as CalendarIcon, Stethoscope, ChevronDown } from 'lucide-react';
 import { DatePicker } from './DatePicker';
+import { useToast } from './ToastProvider';
 
 interface CRMProps {
   user: User;
@@ -21,6 +22,7 @@ const COLUMNS: Column[] = [
 ];
 
 export const CRM: React.FC<CRMProps> = ({ user, doctors, selectedDoctorId, onDoctorChange, isConsultorio }) => {
+  const { showToast } = useToast();
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [selectedDate, setSelectedDate] = useState<string>(new Date().toISOString().split('T')[0]);
   
@@ -97,6 +99,8 @@ export const CRM: React.FC<CRMProps> = ({ user, doctors, selectedDoctorId, onDoc
         // API Call
         await dataService.updateAppointmentStatus(draggedApptId, targetStatus);
         
+        showToast('success', `Status alterado para ${targetStatus.replace('_', ' ')}!`);
+
         // Log N8N simulation
         if (targetStatus === AppointmentStatus.ATENDIDO) {
             console.log(`[N8N] Triggering Review Request for ${appt.patientName}`);
@@ -105,7 +109,7 @@ export const CRM: React.FC<CRMProps> = ({ user, doctors, selectedDoctorId, onDoc
         }
       }
     } catch (error) {
-      alert('Erro ao atualizar status.');
+      showToast('error', 'Erro ao atualizar status. Tente novamente.');
       // Revert optimistic update is handled by subscription refresh
     } finally {
       setDraggedApptId(null);
@@ -133,8 +137,9 @@ export const CRM: React.FC<CRMProps> = ({ user, doctors, selectedDoctorId, onDoc
         notes: editNotes
       });
       setIsDetailsModalOpen(false);
+      showToast('success', 'Alterações salvas!');
     } catch (error: any) {
-      alert(error.message || "Erro ao salvar.");
+      showToast('error', error.message || 'Erro ao atualizar.');
     }
   };
 
@@ -143,7 +148,10 @@ export const CRM: React.FC<CRMProps> = ({ user, doctors, selectedDoctorId, onDoc
       try {
           await dataService.deleteAppointment(selectedAppointment.id);
           setIsDetailsModalOpen(false);
-      } catch (e) { alert("Erro ao cancelar."); }
+          showToast('success', 'Agendamento cancelado.');
+      } catch (e) { 
+          showToast('error', 'Erro ao excluir.');
+      }
   };
 
   const generateTimeOptions30Min = () => {
@@ -268,7 +276,7 @@ export const CRM: React.FC<CRMProps> = ({ user, doctors, selectedDoctorId, onDoc
                             <Edit2 size={24} />
                         </div>
                         <div>
-                            <h3 className="text-lg font-bold text-gray-800">Detalhes do Paciente</h3>
+                            <h3 className="text-lg font-bold text-gray-800">Tipo de Consulta</h3>
                             <p className="text-sm text-gray-500">Visualizar e editar dados</p>
                         </div>
                     </div>
@@ -320,7 +328,7 @@ export const CRM: React.FC<CRMProps> = ({ user, doctors, selectedDoctorId, onDoc
                          
                          <div className="space-y-4">
                              <div>
-                                 <label className="block text-xs text-gray-500 mb-1">Procedimento</label>
+                                 <label className="block text-xs text-gray-500 mb-1">Tipo de Consulta</label>
                                  <div className="relative">
                                      <Stethoscope size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
                                      <select

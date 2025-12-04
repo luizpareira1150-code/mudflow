@@ -1,8 +1,8 @@
+
 import React, { useState, useEffect } from 'react';
 import Sidebar from './components/Sidebar';
 import Dashboard from './components/Dashboard';
 import Patients from './components/Patients';
-import Automations from './components/Automations';
 import { Agenda } from './components/Agenda';
 import Admin from './components/Admin';
 import { CRM } from './components/CRM';
@@ -10,6 +10,7 @@ import { Login } from './components/Login';
 import { ViewState, User, UserRole, Doctor, Organization, AccountType } from './types';
 import { authService, dataService } from './services/mockSupabase';
 import { Loader2 } from 'lucide-react';
+import { ToastProvider } from './components/ToastProvider';
 
 const App: React.FC = () => {
   const [currentView, setView] = useState<ViewState>(ViewState.Dashboard);
@@ -47,6 +48,32 @@ const App: React.FC = () => {
             }
         };
         loadContext();
+    }
+  }, [user]);
+
+  // Documentation Log for N8N
+  useEffect(() => {
+    if (user && user.role === UserRole.DOCTOR_ADMIN) {
+      console.group('📚 [MedFlow] Guia de Integração N8N');
+      console.log('%c1. Configure o Webhook N8N na aba Integrações', 'color: #8b5cf6; font-weight: bold');
+      console.log('%c2. Configure a Evolution API (Instance Name e API Key)', 'color: #10b981; font-weight: bold');
+      console.log('%c3. Copie o Token de API e use no N8N para chamar o sistema', 'color: #f59e0b; font-weight: bold');
+      console.log('%c4. Exemplo de chamada do N8N:', 'color: #06b6d4; font-weight: bold');
+      console.log(JSON.stringify({
+        action: 'CREATE_APPOINTMENT',
+        authToken: 'seu_token_aqui',
+        clinicId: user.clinicId,
+        data: {
+          doctorId: 'doc_1',
+          patientName: 'João Silva',
+          patientPhone: '11999999999',
+          date: '2025-01-15',
+          time: '14:00',
+          procedure: 'Consulta',
+          notes: 'Agendamento via WhatsApp'
+        }
+      }, null, 2));
+      console.groupEnd();
     }
   }, [user]);
 
@@ -92,8 +119,6 @@ const App: React.FC = () => {
         );
       case ViewState.Patients:
         return <Patients />;
-      case ViewState.Automations:
-        return <Automations />;
       case ViewState.Settings:
         return <Admin user={user} />;
       default:
@@ -109,23 +134,25 @@ const App: React.FC = () => {
     );
   }
 
-  if (!user) {
-    return <Login onLogin={handleLogin} />;
-  }
-
   return (
-    <div className="flex h-screen w-full bg-slate-50 overflow-hidden font-sans">
-      <Sidebar 
-        user={user} 
-        activePage={currentView} 
-        onNavigate={(page) => setView(page as ViewState)} 
-        onLogout={handleLogout} 
-      />
-      
-      <main className="flex-1 ml-64 overflow-y-auto h-full">
-        {renderContent()}
-      </main>
-    </div>
+    <ToastProvider>
+      {!user ? (
+        <Login onLogin={handleLogin} />
+      ) : (
+        <div className="flex h-screen w-full bg-slate-50 overflow-hidden font-sans">
+          <Sidebar 
+            user={user} 
+            activePage={currentView} 
+            onNavigate={(page) => setView(page as ViewState)} 
+            onLogout={handleLogout} 
+          />
+          
+          <main className="flex-1 ml-64 overflow-y-auto h-full">
+            {renderContent()}
+          </main>
+        </div>
+      )}
+    </ToastProvider>
   );
 };
 

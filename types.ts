@@ -1,8 +1,9 @@
+
+
 export enum ViewState {
   Dashboard = 'Dashboard',
   Agenda = 'Agenda',
   Patients = 'Patients',
-  Automations = 'Automations',
   Settings = 'Settings'
 }
 
@@ -126,7 +127,10 @@ export interface ClinicSettings {
   clinicId: string;
   n8nWebhookUrl?: string;       
   evolutionInstanceName?: string; 
-  evolutionApiKey?: string;       
+  evolutionApiKey?: string;
+  clinicToken?: string; // Token legado para API de entrada
+  apiToken?: string; // NOVO: Token único para autenticação N8N → Sistema
+  n8nProductionMode?: boolean; // false = simulação, true = enviar de verdade
 }
 
 export interface Session {
