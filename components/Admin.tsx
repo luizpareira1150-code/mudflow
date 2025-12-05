@@ -1,12 +1,13 @@
 
-
 import React, { useState, useEffect } from 'react';
 import { User, UserRole, ClinicSettings, Doctor, Organization, AccountType } from '../types';
 import { dataService, authService } from '../services/mockSupabase';
 import Automations from './Automations';
-import { Users, Building2, UserPlus, KeyRound, Trash2, RefreshCw, AlertTriangle, X, Webhook, MessageSquare, Save, Link2, Lock, Eye, EyeOff, Stethoscope, ShieldCheck, Workflow, Copy, Shield, CheckCircle, Zap, Phone } from 'lucide-react';
+import { Users, Building2, UserPlus, KeyRound, Trash2, RefreshCw, AlertTriangle, X, Webhook, MessageSquare, Save, Link2, Lock, Eye, EyeOff, Stethoscope, ShieldCheck, Workflow, Copy, Shield, CheckCircle, Zap, Phone, Activity, Calendar } from 'lucide-react';
 import { useToast } from './ToastProvider';
 import { generateApiToken } from '../services/n8nIntegration';
+import { ActivityLogs } from './ActivityLogs';
+import { DoctorAvailabilityConfig } from './DoctorAvailabilityConfig';
 
 interface AdminProps {
   user: User;
@@ -14,7 +15,7 @@ interface AdminProps {
 
 const Admin: React.FC<AdminProps> = ({ user: currentUser }) => {
   const { showToast } = useToast();
-  const [activeTab, setActiveTab] = useState<'team' | 'doctors' | 'integrations' | 'automations'>('team');
+  const [activeTab, setActiveTab] = useState<'team' | 'doctors' | 'integrations' | 'automations' | 'audit'>('team');
 
   // --- TEAM STATE ---
   const [users, setUsers] = useState<User[]>([]);
@@ -33,6 +34,7 @@ const Admin: React.FC<AdminProps> = ({ user: currentUser }) => {
   // --- DOCTORS STATE (For CLINICA accounts only) ---
   const [doctors, setDoctors] = useState<Doctor[]>([]);
   const [newDoctor, setNewDoctor] = useState({ name: '', specialty: 'Clínico Geral', color: 'blue' });
+  const [selectedDoctorForAvailability, setSelectedDoctorForAvailability] = useState<Doctor | null>(null);
 
   // --- ORGANIZATION STATE ---
   const [currentOrganization, setCurrentOrganization] = useState<Organization | null>(null);
@@ -292,6 +294,15 @@ const Admin: React.FC<AdminProps> = ({ user: currentUser }) => {
                 </button>
             </>
         )}
+        
+        <button
+          onClick={() => setActiveTab('audit')}
+          className={`flex items-center gap-2 px-6 py-2.5 rounded-lg text-sm font-medium transition-all whitespace-nowrap
+            ${activeTab === 'audit' ? 'bg-white text-red-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+        >
+          <Activity size={18} />
+          Auditoria
+        </button>
       </div>
 
       {/* --- TAB: TEAM --- */}
@@ -597,14 +608,23 @@ const Admin: React.FC<AdminProps> = ({ user: currentUser }) => {
                                          <p className="text-xs text-gray-500">{doc.specialty}</p>
                                      </div>
                                  </div>
-                                 {doctors.length > 1 && (
+                                 <div className="flex items-center gap-2">
                                     <button 
-                                        onClick={() => setDeleteModal({ isOpen: true, user: null, doctor: doc })}
-                                        className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                                        onClick={() => setSelectedDoctorForAvailability(doc)}
+                                        className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                                        title="Configurar Disponibilidade"
                                     >
-                                        <Trash2 size={18} />
+                                        <Calendar size={18} />
                                     </button>
-                                 )}
+                                    {doctors.length > 1 && (
+                                        <button 
+                                            onClick={() => setDeleteModal({ isOpen: true, user: null, doctor: doc })}
+                                            className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                                        >
+                                            <Trash2 size={18} />
+                                        </button>
+                                    )}
+                                 </div>
                              </div>
                          ))}
                     </div>
@@ -793,6 +813,13 @@ const Admin: React.FC<AdminProps> = ({ user: currentUser }) => {
             <Automations />
         </div>
       )}
+      
+      {/* --- TAB: AUDIT --- */}
+      {activeTab === 'audit' && (
+        <div className="animate-in fade-in slide-in-from-right-4 duration-300">
+          <ActivityLogs user={currentUser} />
+        </div>
+      )}
 
       {/* --- DELETE MODAL --- */}
       {deleteModal.isOpen && (deleteModal.user || deleteModal.doctor) && (
@@ -885,6 +912,18 @@ const Admin: React.FC<AdminProps> = ({ user: currentUser }) => {
                 </button>
             </form>
           </div>
+        </div>
+      )}
+
+      {/* --- AVAILABILITY CONFIG MODAL --- */}
+      {selectedDoctorForAvailability && ( 
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+            <div className="w-full max-w-4xl h-[90vh]">
+                <DoctorAvailabilityConfig 
+                    doctor={selectedDoctorForAvailability} 
+                    onClose={() => setSelectedDoctorForAvailability(null)} 
+                /> 
+            </div>
         </div>
       )}
     </div>

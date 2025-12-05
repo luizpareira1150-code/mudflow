@@ -1,146 +1,17 @@
 
-import React, { useState, useEffect } from 'react';
-import Sidebar from './components/Sidebar';
-import Dashboard from './components/Dashboard';
-import Patients from './components/Patients';
-import { Agenda } from './components/Agenda';
-import Admin from './components/Admin';
-import { CRM } from './components/CRM';
-import { Login } from './components/Login';
-import { ViewState, User, UserRole, Doctor, Organization, AccountType } from './types';
-import { authService, dataService } from './services/mockSupabase';
+import React from 'react';
 import { Loader2 } from 'lucide-react';
-import { ToastProvider } from './components/ToastProvider';
-import { OwnerDashboard } from './components/OwnerDashboard';
-import { ActivityLogs } from './components/ActivityLogs';
+import { ToastProvider, useToast } from './components/ToastProvider';
+import { Login } from './components/Login';
+import { MainLayout } from './components/MainLayout';
+import { AuthProvider, useAuth } from './contexts/AuthContext';
+import { ClinicProvider } from './contexts/ClinicContext';
 
-const App: React.FC = () => {
-  const [currentView, setView] = useState<ViewState>(ViewState.Dashboard);
-  const [user, setUser] = useState<User | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  // Application Data State
-  const [doctors, setDoctors] = useState<Doctor[]>([]);
-  const [selectedDoctorId, setSelectedDoctorId] = useState<string>('');
-  const [organization, setOrganization] = useState<Organization | null>(null);
-
-  useEffect(() => {
-    // Check for existing session
-    const currentUser = authService.getCurrentUser();
-    if (currentUser) {
-      setUser(currentUser);
-    }
-    setLoading(false);
-  }, []);
-
-  // Fetch doctors and organization when user logs in or when updated
-  useEffect(() => {
-    if (user && user.role !== UserRole.OWNER) {
-        const loadContext = async () => {
-            try {
-                const org = await dataService.getOrganization(user.clinicId);
-                setOrganization(org);
-                const docs = await dataService.getDoctors(user.clinicId);
-                setDoctors(docs);
-                if (docs.length > 0 && !selectedDoctorId) {
-                    setSelectedDoctorId(docs[0].id);
-                } else if (docs.length > 0 && selectedDoctorId) {
-                    // Check if selected doctor still exists
-                    const exists = docs.find(d => d.id === selectedDoctorId);
-                    if (!exists) setSelectedDoctorId(docs[0].id);
-                }
-            } catch (error) {
-                console.error("Failed to load application context", error);
-            }
-        };
-
-        loadContext();
-
-        // Listen for updates from Admin panel (e.g., Doctor Created/Deleted)
-        window.addEventListener('medflow:doctors-updated', loadContext);
-        
-        return () => {
-            window.removeEventListener('medflow:doctors-updated', loadContext);
-        };
-    }
-  }, [user]);
-
-  // Documentation Log for N8N
-  useEffect(() => {
-    if (user && user.role === UserRole.DOCTOR_ADMIN) {
-      console.group('📚 [MedFlow] Guia de Integração N8N');
-      console.log('%c1. Configure o Webhook N8N na aba Integrações', 'color: #8b5cf6; font-weight: bold');
-      console.log('%c2. Configure a Evolution API (Instance Name e API Key)', 'color: #10b981; font-weight: bold');
-      console.log('%c3. Copie o Token de API e use no N8N para chamar o sistema', 'color: #f59e0b; font-weight: bold');
-      console.log('%c4. Exemplo de chamada do N8N:', 'color: #06b6d4; font-weight: bold');
-      console.log(JSON.stringify({
-        action: 'CREATE_APPOINTMENT',
-        authToken: 'seu_token_aqui',
-        clinicId: user.clinicId,
-        data: {
-          doctorId: 'doc_1',
-          patientName: 'João Silva',
-          patientPhone: '11999999999',
-          date: '2025-01-15',
-          time: '14:00',
-          procedure: 'Consulta',
-          notes: 'Agendamento via WhatsApp'
-        }
-      }, null, 2));
-      console.groupEnd();
-    }
-  }, [user]);
-
-  const handleLogin = (loggedInUser: User) => {
-    setUser(loggedInUser);
-    setView(ViewState.Dashboard);
-  };
-
-  const handleLogout = async () => {
-    await authService.logout();
-    setUser(null);
-    setDoctors([]);
-    setSelectedDoctorId('');
-  };
-
-  const renderContent = () => {
-    if (!user) return null;
-
-    switch (currentView) {
-      case ViewState.Dashboard:
-        // Owner sees the Stats Dashboard, others see the CRM Kanban
-        if (user.role === UserRole.OWNER) {
-            return <OwnerDashboard currentUser={user} />;
-        }
-        return (
-            <CRM 
-                user={user}
-                doctors={doctors}
-                selectedDoctorId={selectedDoctorId}
-                onDoctorChange={setSelectedDoctorId}
-                isConsultorio={organization?.accountType === AccountType.CONSULTORIO}
-            />
-        );
-      case ViewState.Agenda:
-        return (
-            <Agenda 
-                user={user}
-                doctors={doctors}
-                selectedDoctorId={selectedDoctorId}
-                onDoctorChange={setSelectedDoctorId}
-                isConsultorio={organization?.accountType === AccountType.CONSULTORIO}
-            />
-        );
-      case ViewState.Patients:
-        return <Patients />;
-      case ViewState.Settings:
-        return <Admin user={user} />;
-      case ViewState.Logs:
-        return <ActivityLogs user={user} />;
-      default:
-        return <Dashboard />;
-    }
-  };
+// Componente intermediário para decidir entre Login ou Layout
+// Necessário para usar o hook useAuth que está dentro do AuthProvider
+const AppContent: React.FC = () => {
+  const { user, loading, login } = useAuth();
+  const { showToast } = useToast();
 
   if (loading) {
     return (
@@ -150,24 +21,63 @@ const App: React.FC = () => {
     );
   }
 
+  if (!user) {
+    return (
+      <Login onLogin={async (u) => {
+         // O Login component atual passa o objeto usuário direto, 
+         // mas aqui vamos apenas forçar o refresh do contexto se necessário,
+         // ou confiar que o contexto já atualizou.
+         // A prop onLogin do componente Login original espera (user: User) => void.
+         // Vamos manter a compatibilidade ou o Login deve usar o hook useAuth também?
+         // Para este refactor sem quebrar o componente Login, aceitamos o objeto mas usamos o contexto.
+      }} />
+    );
+  }
+
+  return (
+    <ClinicProvider>
+      <MainLayout />
+    </ClinicProvider>
+  );
+};
+
+// Wrapper para o Login Component usar o Contexto
+// Como o componente Login.tsx original usa props e estado local,
+// vamos criar um wrapper aqui ou refatorar o Login.tsx. 
+// Para ser menos intrusivo, vamos adaptar o render acima.
+// Mas espere, o Login.tsx original chama authService.login diretamente.
+// O ideal é que o Login chame o login do contexto.
+
+// Vamos fazer uma pequena adaptação no AppContent para ser compatível com o Login atual
+// O Login.tsx espera `onLogin`. 
+const AppContentCompatible: React.FC = () => {
+  const { user, loading, updateUser } = useAuth();
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center text-slate-400">
+        <Loader2 className="animate-spin" size={32} />
+      </div>
+    );
+  }
+
+  if (!user) {
+    return <Login onLogin={(u) => updateUser(u)} />;
+  }
+
+  return (
+    <ClinicProvider>
+      <MainLayout />
+    </ClinicProvider>
+  );
+};
+
+const App: React.FC = () => {
   return (
     <ToastProvider>
-      {!user ? (
-        <Login onLogin={handleLogin} />
-      ) : (
-        <div className="flex h-screen w-full bg-slate-50 overflow-hidden font-sans">
-          <Sidebar 
-            user={user} 
-            activePage={currentView} 
-            onNavigate={(page) => setView(page as ViewState)} 
-            onLogout={handleLogout} 
-          />
-          
-          <main className="flex-1 ml-64 overflow-y-auto h-full">
-            {renderContent()}
-          </main>
-        </div>
-      )}
+      <AuthProvider>
+        <AppContentCompatible />
+      </AuthProvider>
     </ToastProvider>
   );
 };

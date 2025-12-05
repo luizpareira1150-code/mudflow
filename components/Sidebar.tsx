@@ -1,3 +1,4 @@
+
 import React from 'react';
 import { User, UserRole, ViewState } from '../types';
 import { LayoutDashboard, Users, Calendar, LogOut, Settings, ClipboardList, BarChart3 } from 'lucide-react';
@@ -14,6 +15,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ user, activePage, onNavigate, 
   const menuItems = [
     { id: ViewState.Dashboard, label: 'Dashboard', icon: BarChart3, roles: [UserRole.OWNER] },
     { id: ViewState.Dashboard, label: 'CRM', icon: LayoutDashboard, roles: [UserRole.SECRETARY, UserRole.DOCTOR_ADMIN] },
+    { id: ViewState.Metrics, label: 'Dashboard', icon: BarChart3, roles: [UserRole.DOCTOR_ADMIN] },
     { id: ViewState.Agenda, label: 'Agenda', icon: Calendar, roles: [UserRole.SECRETARY, UserRole.DOCTOR_ADMIN] },
     { id: ViewState.Patients, label: 'Pacientes', icon: Users, roles: [UserRole.SECRETARY, UserRole.DOCTOR_ADMIN] },
     { id: ViewState.Logs, label: 'Auditoria', icon: ClipboardList, roles: [UserRole.OWNER, UserRole.DOCTOR_ADMIN] },
@@ -46,6 +48,11 @@ export const Sidebar: React.FC<SidebarProps> = ({ user, activePage, onNavigate, 
             
             const Icon = item.icon;
             const isActive = activePage === item.id;
+            
+            // Special case for duplicate ViewState.Dashboard ID (CRM vs Owner Dashboard)
+            // If user is Owner, Dashboard maps to OwnerDashboard (BarChart3)
+            // If user is Doc/Sec, Dashboard maps to CRM (LayoutDashboard)
+            // But here we have Metrics which also maps to Dashboard label for Doc.
             
             return (
               <button

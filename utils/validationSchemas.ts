@@ -77,7 +77,13 @@ export const AppointmentUpdateSchema = AppointmentSchema.partial().extend({
 
 // 4. Schema de Webhook do N8N
 export const N8NWebhookSchema = z.object({
-  action: z.enum(['CREATE_APPOINTMENT', 'UPDATE_STATUS', 'BLOCK_SCHEDULE', 'CREATE_PATIENT_CONTACT']),
+  action: z.enum([
+    'CREATE_APPOINTMENT', 
+    'UPDATE_STATUS', 
+    'BLOCK_SCHEDULE', 
+    'CREATE_PATIENT_CONTACT',
+    'GET_SLOT_SUGGESTIONS' // Nova ação para IA consumir inteligência
+  ]),
   authToken: z.string().min(1, 'Token de autenticação obrigatório'),
   clinicId: z.string().min(1, 'Clinic ID obrigatório'),
   

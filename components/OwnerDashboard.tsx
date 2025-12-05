@@ -1,18 +1,20 @@
+
 import React, { useState, useEffect, useMemo } from 'react';
 import { 
   TrendingUp, Users, Calendar, AlertTriangle, 
   CheckCircle, Zap, Building2, Filter, 
   Bell, RefreshCw, Award, Target, DollarSign,
   ArrowUp, ArrowDown, Minus, Activity, MessageSquare, Phone, ChevronDown,
-  BarChart3, ExternalLink, Download, UserPlus, Eye
+  BarChart3, ExternalLink, Download, UserPlus, Eye, Mail, Info, X
 } from 'lucide-react';
 import { analyticsService } from '../services/mockSupabase';
-import { User, ClientHealthMetrics, GlobalMetrics } from '../types';
+import { User, ClientHealthMetrics, GlobalMetrics, OwnerAlert } from '../types';
 
 export const OwnerDashboard: React.FC<{ currentUser: User }> = ({ currentUser }) => {
   const [loading, setLoading] = useState(true);
   const [globalMetrics, setGlobalMetrics] = useState<GlobalMetrics | null>(null);
   const [clientsMetrics, setClientsMetrics] = useState<ClientHealthMetrics[]>([]);
+  const [alerts, setAlerts] = useState<OwnerAlert[]>([]);
   const [showQuickActions, setShowQuickActions] = useState(false);
 
   // Filtros Globais
@@ -23,8 +25,7 @@ export const OwnerDashboard: React.FC<{ currentUser: User }> = ({ currentUser })
   // Visão da tabela de clientes
   const [clientView, setClientView] = useState<'health' | 'weekly' | 'monthly'>('health');
 
-  // Notificações
-  const [notifications, setNotifications] = useState<any[]>([]);
+  // Notificações / Alertas
   const [showNotifications, setShowNotifications] = useState(false);
 
   // --- AUTOMATION PERIOD STATE ---
@@ -60,10 +61,10 @@ export const OwnerDashboard: React.FC<{ currentUser: User }> = ({ currentUser })
   const calculateMetrics = async () => {
     setLoading(true);
     try {
-      const { global, clients } = await analyticsService.getOwnerDashboardMetrics();
+      const { global, clients, alerts: generatedAlerts } = await analyticsService.getOwnerDashboardMetrics();
       setGlobalMetrics(global);
       setClientsMetrics(clients);
-      generateNotifications(clients);
+      setAlerts(generatedAlerts);
     } catch (error) {
       console.error('Erro ao calcular métricas:', error);
     } finally {
@@ -71,34 +72,28 @@ export const OwnerDashboard: React.FC<{ currentUser: User }> = ({ currentUser })
     }
   };
 
-  const generateNotifications = (metrics: ClientHealthMetrics[]) => {
-    const notifs = [];
-    const riskClients = metrics.filter(m => m.healthScore === 'risk');
-    if (riskClients.length > 0) {
-      notifs.push({
-        type: 'critical',
-        title: `${riskClients.length} cliente(s) em risco de churn`,
-        time: 'agora',
-        action: 'view_clients'
-      });
-    }
-    const webhookIssues = metrics.filter(m => m.webhookStatus === 'warning');
-    if (webhookIssues.length > 0) {
-      notifs.push({
-        type: 'warning',
-        title: `${webhookIssues.length} webhook(s) com falhas`,
-        time: 'há 2 horas',
-        action: 'view_logs'
-      });
-    }
-    setNotifications(notifs);
-  };
-
   useEffect(() => {
     calculateMetrics();
     const interval = setInterval(calculateMetrics, 5 * 60 * 1000);
     return () => clearInterval(interval);
   }, []);
+
+  const handleAlertAction = (alertItem: OwnerAlert) => {
+      switch(alertItem.actionType) {
+          case 'CONTACT_PHONE':
+              window.alert(`📞 Iniciando chamada para ${alertItem.clientName}: ${alertItem.actionPayload}`);
+              break;
+          case 'CONTACT_EMAIL':
+              window.location.href = `mailto:${alertItem.actionPayload}?subject=Aviso MedFlow: ${alertItem.title}`;
+              break;
+          case 'OPEN_CONFIG':
+              window.alert('Redirecionando para logs de integração...');
+              break;
+          case 'VIEW_REPORT':
+              window.alert('Abrindo relatório detalhado...');
+              break;
+      }
+  };
 
   const formatRelativeDate = (isoDate: string): string => {
     const date = new Date(isoDate);
@@ -329,6 +324,15 @@ export const OwnerDashboard: React.FC<{ currentUser: User }> = ({ currentUser })
     return 'none';
   };
 
+  const getAlertIcon = (type: string) => {
+      switch(type) {
+          case 'critical': return <AlertTriangle size={18} className="text-red-500" />;
+          case 'warning': return <AlertTriangle size={18} className="text-amber-500" />;
+          case 'info': return <Info size={18} className="text-blue-500" />;
+          default: return <Info size={18} />;
+      }
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-screen">
@@ -340,10 +344,44 @@ export const OwnerDashboard: React.FC<{ currentUser: User }> = ({ currentUser })
     );
   }
 
+  const criticalAlerts = alerts.filter(a => a.type === 'critical');
+
   return (
     <div className="min-h-screen bg-gray-50 p-6 animate-in fade-in duration-500">
+      
+      {/* 🔴 TOP BAR - ALERTA CRÍTICO (SE HOUVER) */}
+      {criticalAlerts.length > 0 && (
+          <div className="bg-red-50 border border-red-100 rounded-xl p-4 mb-6 animate-pulse-slow">
+              <div className="flex items-start gap-3">
+                  <div className="p-2 bg-red-100 rounded-lg">
+                      <AlertTriangle size={24} className="text-red-600" />
+                  </div>
+                  <div className="flex-1">
+                      <h3 className="text-red-800 font-bold text-lg flex items-center justify-between">
+                          {criticalAlerts.length} Alerta{criticalAlerts.length > 1 ? 's' : ''} Crítico{criticalAlerts.length > 1 ? 's' : ''} - Requer Atenção Imediata
+                          <button 
+                            onClick={() => { setShowNotifications(true); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
+                            className="text-sm bg-white border border-red-200 text-red-700 px-3 py-1 rounded-lg hover:bg-red-50 shadow-sm"
+                          >
+                              Ver Detalhes
+                          </button>
+                      </h3>
+                      <div className="mt-1 space-y-1">
+                          {criticalAlerts.slice(0, 2).map(alert => (
+                              <p key={alert.id} className="text-red-700 text-sm flex items-center gap-2">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-red-500"></span>
+                                  <strong>{alert.clientName}:</strong> {alert.message}
+                              </p>
+                          ))}
+                          {criticalAlerts.length > 2 && <p className="text-red-600 text-xs italic">e mais {criticalAlerts.length - 2}...</p>}
+                      </div>
+                  </div>
+              </div>
+          </div>
+      )}
+
       {/* HEADER */}
-      <div className="mb-6">
+      <div className="mb-6 relative">
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-3xl font-bold text-gray-900 flex items-center gap-3">
@@ -371,8 +409,8 @@ export const OwnerDashboard: React.FC<{ currentUser: User }> = ({ currentUser })
         </div>
       </div>
 
-      {/* FILTROS GLOBAIS */}
-      <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4 mb-6">
+      {/* FILTROS GLOBAIS E PAINEL DE NOTIFICAÇÕES INTELIGENTES */}
+      <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4 mb-6 relative">
         <div className="flex flex-wrap gap-4 items-center">
             <div className="flex items-center gap-2">
             <Filter size={18} className="text-gray-400" />
@@ -419,16 +457,87 @@ export const OwnerDashboard: React.FC<{ currentUser: User }> = ({ currentUser })
               <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 pointer-events-none" />
             </div>
             
-            <div className="ml-auto flex items-center gap-2">
-            <button
-                onClick={() => setShowNotifications(!showNotifications)}
-                className="relative p-2 text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
-            >
-                <Bell size={18} />
-                {notifications.length > 0 && (
-                <span className="absolute top-1 right-1 w-2 h-2 bg-red-500 rounded-full" />
+            {/* NOTIFICATION BELL WITH DROPDOWN */}
+            <div className="ml-auto relative">
+                <button
+                    onClick={() => setShowNotifications(!showNotifications)}
+                    className={`relative p-2 rounded-lg transition-colors ${showNotifications ? 'bg-blue-50 text-blue-600' : 'text-gray-600 hover:bg-gray-100'}`}
+                >
+                    <Bell size={20} />
+                    {alerts.length > 0 && (
+                    <span className="absolute top-1 right-1 w-2.5 h-2.5 bg-red-500 border-2 border-white rounded-full flex items-center justify-center">
+                         {alerts.some(a => a.type === 'critical') && <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>}
+                    </span>
+                    )}
+                </button>
+
+                {/* DROPDOWN DE ALERTAS INTELIGENTES */}
+                {showNotifications && (
+                    <div className="absolute right-0 top-full mt-2 w-[400px] bg-white rounded-xl shadow-2xl border border-gray-200 z-50 animate-in slide-in-from-top-2 overflow-hidden">
+                        <div className="p-4 border-b border-gray-100 bg-gray-50/50 flex justify-between items-center">
+                            <h3 className="font-bold text-gray-800 flex items-center gap-2">
+                                <Zap size={16} className="text-orange-500" />
+                                Alertas Proativos
+                            </h3>
+                            <button onClick={() => setShowNotifications(false)} className="text-gray-400 hover:text-gray-600">
+                                <X size={18} />
+                            </button>
+                        </div>
+                        
+                        <div className="max-h-[400px] overflow-y-auto custom-scrollbar">
+                            {alerts.length === 0 ? (
+                                <div className="p-8 text-center text-gray-400">
+                                    <CheckCircle size={32} className="mx-auto mb-2 opacity-30 text-green-500" />
+                                    <p className="text-sm">Tudo tranquilo! Nenhum alerta.</p>
+                                </div>
+                            ) : (
+                                <div className="divide-y divide-gray-50">
+                                    {alerts.map(alert => (
+                                        <div key={alert.id} className={`p-4 hover:bg-gray-50 transition-colors ${alert.type === 'critical' ? 'bg-red-50/30' : ''}`}>
+                                            <div className="flex gap-3">
+                                                <div className="mt-1">{getAlertIcon(alert.type)}</div>
+                                                <div className="flex-1">
+                                                    <div className="flex justify-between items-start">
+                                                        <h4 className="text-sm font-bold text-gray-900">{alert.clientName}</h4>
+                                                        {alert.metricValue && (
+                                                            <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
+                                                                alert.type === 'critical' ? 'bg-red-100 text-red-700' :
+                                                                alert.type === 'warning' ? 'bg-amber-100 text-amber-700' :
+                                                                'bg-blue-100 text-blue-700'
+                                                            }`}>
+                                                                {alert.metricValue}
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                    <p className="text-xs font-semibold text-gray-700 mt-0.5">{alert.title}</p>
+                                                    <p className="text-xs text-gray-500 mt-1 leading-relaxed">{alert.message}</p>
+                                                    
+                                                    {/* Action Button */}
+                                                    <button 
+                                                        onClick={() => handleAlertAction(alert)}
+                                                        className={`mt-2 w-full py-1.5 text-xs font-bold rounded border flex items-center justify-center gap-1.5 transition-colors ${
+                                                            alert.type === 'critical' 
+                                                                ? 'bg-red-600 text-white border-red-600 hover:bg-red-700' 
+                                                                : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-100'
+                                                        }`}
+                                                    >
+                                                        {alert.actionType === 'CONTACT_PHONE' && <><Phone size={12} /> Ligar Agora</>}
+                                                        {alert.actionType === 'CONTACT_EMAIL' && <><Mail size={12} /> Enviar Email</>}
+                                                        {alert.actionType === 'OPEN_CONFIG' && <><Zap size={12} /> Resolver Integração</>}
+                                                        {alert.actionType === 'VIEW_REPORT' && <><BarChart3 size={12} /> Ver Relatório</>}
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                        <div className="p-2 border-t border-gray-100 bg-gray-50 text-center text-[10px] text-gray-500">
+                             Dica: Resolva os alertas críticos para evitar churn.
+                        </div>
+                    </div>
                 )}
-            </button>
             </div>
         </div>
       </div>
@@ -830,40 +939,6 @@ export const OwnerDashboard: React.FC<{ currentUser: User }> = ({ currentUser })
                 <div><div className="flex items-center justify-between mb-2"><span className="text-xs text-gray-600">Reviews</span><span className="text-xs font-bold text-gray-900">{currentAutoStats.reviews.count}</span></div><div className="bg-gray-100 rounded-full h-2 overflow-hidden"><div className="bg-purple-500 h-full" style={{ width: `${currentAutoStats.reviews.rate}%` }}></div></div><span className="text-xs text-purple-600 font-medium">{currentAutoStats.reviews.rate}% respondeu</span></div>
                 </div>
             </div>
-      </div>
-
-      <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 mb-6">
-            <h3 className="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2"><Activity size={20} className="text-blue-600" />Mapa de Calor - Atividade (Últimos 30 dias)</h3>
-            <div className="overflow-x-auto">
-                <div className="inline-block min-w-full">
-                <div className="flex gap-1 mb-2 ml-32">{last30Days.map((day, idx) => (<div key={idx} className="w-6 text-center"><span className="text-xs text-gray-400">{day.label}</span></div>))}</div>
-                {clientsMetrics.slice(0, 8).map((client) => (<div key={client.clientId} className="flex items-center gap-1 mb-1"><div className="w-32 truncate text-xs text-gray-700 font-medium">{client.clientName}</div>{last30Days.map((day, idx) => {const activity = getClientActivityForDay(client, day.date);return (<div key={idx} className={`w-6 h-6 rounded ${activity === 'high' ? 'bg-green-500' : activity === 'medium' ? 'bg-green-300' : activity === 'low' ? 'bg-green-100' : 'bg-gray-100'}`} title={`${client.clientName} - ${day.fullDate}: ${activity}`}/>);})}{client.healthScore === 'risk' && <span className="ml-2 text-xs text-red-600 font-bold">⚠️ Inativo</span>}</div>))}
-                </div>
-            </div>
-            <div className="flex items-center gap-4 mt-4 pt-4 border-t border-gray-100"><span className="text-xs text-gray-500">Legenda:</span><div className="flex items-center gap-1"><div className="w-4 h-4 rounded bg-green-500"></div><span className="text-xs text-gray-600">Alta (5+ ações)</span></div><div className="flex items-center gap-1"><div className="w-4 h-4 rounded bg-green-300"></div><span className="text-xs text-gray-600">Média (2-4 ações)</span></div><div className="flex items-center gap-1"><div className="w-4 h-4 rounded bg-green-100"></div><span className="text-xs text-gray-600">Baixa (1 ação)</span></div><div className="flex items-center gap-1"><div className="w-4 h-4 rounded bg-gray-100"></div><span className="text-xs text-gray-600">Sem atividade</span></div></div>
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
-        <div className="bg-gradient-to-br from-purple-50 to-white rounded-xl shadow-sm border border-purple-100 p-6">
-            <div className="flex items-center justify-between mb-4"><h3 className="text-lg font-bold text-purple-900 flex items-center gap-2"><Building2 size={20} />CONSULTÓRIO</h3><span className="text-xs bg-purple-100 text-purple-700 px-3 py-1 rounded-full font-bold">{consultorioCount} cliente(s)</span></div>
-            <div className="space-y-3">
-            <div className="flex items-center justify-between py-2 border-b border-purple-100"><span className="text-sm text-gray-700">Média agend/mês</span><span className="text-lg font-bold text-purple-900">{consultorioStats.avgMonthly}</span></div>
-            <div className="flex items-center justify-between py-2 border-b border-purple-100"><span className="text-sm text-gray-700">Taxa "Não Veio"</span><span className="text-lg font-bold text-purple-900">{consultorioStats.noShowRate}%</span></div>
-            <div className="flex items-center justify-between py-2 border-b border-purple-100"><span className="text-sm text-gray-700">Taxa Automação</span><span className="text-lg font-bold text-green-600">{consultorioStats.automationRate}% ✅</span></div>
-            <div className="flex items-center justify-between py-2"><span className="text-sm text-gray-700">Ticket Médio/Mês</span><span className="text-lg font-bold text-purple-900">R$ {consultorioStats.avgTicket}</span></div>
-            </div>
-            <div className="mt-4 pt-4 border-t border-purple-100 bg-purple-50 -mx-6 -mb-6 px-6 py-3 rounded-b-xl"><p className="text-xs text-purple-700"><strong>Perfil:</strong> Médicos individuais, operação simples, ticket menor mas volume consistente.</p></div>
-        </div>
-        <div className="bg-gradient-to-br from-blue-50 to-white rounded-xl shadow-sm border border-blue-100 p-6">
-            <div className="flex items-center justify-between mb-4"><h3 className="text-lg font-bold text-blue-900 flex items-center gap-2"><Building2 size={20} />CLÍNICA</h3><span className="text-xs bg-blue-100 text-blue-700 px-3 py-1 rounded-full font-bold">{clinicaCount} cliente(s)</span></div>
-            <div className="space-y-3">
-            <div className="flex items-center justify-between py-2 border-b border-blue-100"><span className="text-sm text-gray-700">Média agend/mês</span><span className="text-lg font-bold text-blue-900">{clinicaStats.avgMonthly}</span></div>
-            <div className="flex items-center justify-between py-2 border-b border-blue-100"><span className="text-sm text-gray-700">Taxa "Não Veio"</span><span className="text-lg font-bold text-blue-900">{clinicaStats.noShowRate}% ✅</span></div>
-            <div className="flex items-center justify-between py-2 border-b border-blue-100"><span className="text-sm text-gray-700">Taxa Automação</span><span className="text-lg font-bold text-green-600">{clinicaStats.automationRate}% ✅</span></div>
-            <div className="flex items-center justify-between py-2"><span className="text-sm text-gray-700">Ticket Médio/Mês</span><span className="text-lg font-bold text-blue-900">R$ {clinicaStats.avgTicket}</span></div>
-            </div>
-            <div className="mt-4 pt-4 border-t border-blue-100 bg-blue-50 -mx-6 -mb-6 px-6 py-3 rounded-b-xl"><p className="text-xs text-blue-700"><strong>Perfil:</strong> Multi-médico, alto volume, melhor ROI. Foco estratégico para crescimento.</p></div>
-        </div>
       </div>
 
       {/* LOGS GLOBAIS DO SISTEMA */}

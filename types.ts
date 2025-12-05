@@ -1,156 +1,81 @@
 
+export enum AccountType {
+  CONSULTORIO = 'CONSULTORIO',
+  CLINICA = 'CLINICA'
+}
+
+export enum UserRole {
+  OWNER = 'OWNER',
+  DOCTOR_ADMIN = 'DOCTOR_ADMIN',
+  SECRETARY = 'SECRETARY'
+}
 
 export enum ViewState {
   Dashboard = 'Dashboard',
   Agenda = 'Agenda',
   Patients = 'Patients',
   Settings = 'Settings',
-  Logs = 'Logs'
-}
-
-export interface WebhookLog {
-  id: string;
-  event: string;
-  payload: any;
-  timestamp: string;
-  status: 'Success' | 'Pending' | 'Failed';
-  destination: string;
-}
-
-// ==========================================
-// NOTIFICATIONS
-// ==========================================
-
-export type NotificationType = 'success' | 'info' | 'warning' | 'error' | 'critical';
-export type NotificationPriority = 'low' | 'medium' | 'high';
-
-export interface Notification {
-  id: string;
-  title: string;
-  message: string;
-  type: NotificationType;
-  priority: NotificationPriority;
-  timestamp: string;
-  read: boolean;
-  
-  // Routing/Targeting
-  targetUserId?: string; // Specific user
-  targetRole?: UserRole[]; // Broadcast to role
-  clinicId: string; // Tenant isolation
-
-  // Context
-  actionLink?: string; // e.g., 'view:Agenda'
-  metadata?: {
-    appointmentId?: string;
-    patientId?: string;
-    patientName?: string;
-    reason?: string;
-    date?: string;
-    [key: string]: any;
-  };
-}
-
-export interface NotificationPreferences {
-  soundEnabled: boolean;
-  popupEnabled: boolean;
-}
-
-// ==========================================
-// TIPOS DE AUDITORIA (AUDIT LOGS) - COMPLIANCE LGPD
-// ==========================================
-
-export enum AuditAction {
-  // Contatos (CRM)
-  CONTACT_CREATED = 'CONTACT_CREATED', // Lead entra em contato (EM_CONTATO)
-  
-  // Agendamentos
-  APPOINTMENT_CREATED = 'APPOINTMENT_CREATED',
-  APPOINTMENT_UPDATED = 'APPOINTMENT_UPDATED',
-  APPOINTMENT_DELETED = 'APPOINTMENT_DELETED',
-  STATUS_CHANGED = 'STATUS_CHANGED',
-  AGENDA_BLOCKED = 'AGENDA_BLOCKED',
-  
-  // Pacientes
-  PATIENT_CREATED = 'PATIENT_CREATED',
-  PATIENT_UPDATED = 'PATIENT_UPDATED',
-  
-  // Usuários/Acesso
-  USER_CREATED = 'USER_CREATED',
-  USER_DELETED = 'USER_DELETED',
-  USER_LOGIN = 'USER_LOGIN',
-  USER_LOGOUT = 'USER_LOGOUT',
-  PASSWORD_RESET = 'PASSWORD_RESET',
-  
-  // Configurações e Equipe
-  DOCTOR_CREATED = 'DOCTOR_CREATED',
-  DOCTOR_DELETED = 'DOCTOR_DELETED',
-  SETTINGS_UPDATED = 'SETTINGS_UPDATED',
-  AGENDA_CONFIG_UPDATED = 'AGENDA_CONFIG_UPDATED'
-}
-
-export enum AuditSource {
-  WEB_APP = 'WEB_APP',           // Ação manual pela interface
-  N8N_WEBHOOK = 'N8N_WEBHOOK',   // Ação via automação N8N
-  WHATSAPP = 'WHATSAPP',         // Via WhatsApp (Evolution API)
-  SYSTEM = 'SYSTEM'              // Ação automática do sistema (jobs, triggers)
-}
-
-export interface AuditLog {
-  id: string;                    // UUID único
-  
-  // Identificação da Ação
-  action: AuditAction;           // Tipo de ação realizada
-  entityType: string;            // Tipo da entidade (Appointment, Patient, User, etc)
-  entityId: string;              // ID da entidade afetada
-  entityName?: string;           // Nome legível da entidade (ex: Nome do Paciente) - Cache para display
-  
-  // Contexto da Organização
-  organizationId: string;        // Clínica/consultório
-  
-  // Quem fez a ação (Traceability)
-  userId?: string;               // ID do usuário (se manual)
-  userName?: string;             // Nome do usuário (cache)
-  source: AuditSource;           // Origem da ação
-  
-  // Dados da Mudança (Compliance/LGPD)
-  oldValues?: Record<string, any>;  // Valores antes da mudança (JSON)
-  newValues?: Record<string, any>;  // Valores depois da mudança (JSON)
-  
-  // Informações Adicionais
-  description: string;           // Descrição legível da ação
-  metadata?: Record<string, any>; // Dados extras (IP, device, userAgent, etc)
-  
-  // Timestamp
-  timestamp: string;             // Data e hora do evento (ISO 8601)
-  readonly createdAt: string;    // Data de criação do registro (Imutável)
-}
-
-// --- CRM Domain Types ---
-
-export enum UserRole {
-  OWNER = 'OWNER',         
-  DOCTOR_ADMIN = 'DOCTOR_ADMIN', 
-  SECRETARY = 'SECRETARY'  
-}
-
-export enum AppointmentStatus {
-  EM_CONTATO = 'EM_CONTATO', 
-  AGENDADO = 'AGENDADO',     
-  ATENDIDO = 'ATENDIDO',     
-  NAO_VEIO = 'NAO_VEIO',     
-  BLOQUEADO = 'BLOQUEADO'    
+  Logs = 'Logs',
+  Metrics = 'Metrics'
 }
 
 export enum PatientStatus {
   Active = 'Active',
   Recovering = 'Recovering',
-  Inactive = 'Inactive',
   Critical = 'Critical'
 }
 
-export enum AccountType {
-  CONSULTORIO = 'CONSULTORIO', // 1 médico apenas
-  CLINICA = 'CLINICA'          // Múltiplos médicos
+export enum AppointmentStatus {
+  EM_CONTATO = 'EM_CONTATO',
+  AGENDADO = 'AGENDADO',
+  ATENDIDO = 'ATENDIDO',
+  NAO_VEIO = 'NAO_VEIO',
+  BLOQUEADO = 'BLOQUEADO'
+}
+
+export enum DayOfWeek {
+  SUNDAY = 0,
+  MONDAY = 1,
+  TUESDAY = 2,
+  WEDNESDAY = 3,
+  THURSDAY = 4,
+  FRIDAY = 5,
+  SATURDAY = 6
+}
+
+export enum AuditAction {
+  USER_LOGIN = 'USER_LOGIN',
+  USER_LOGOUT = 'USER_LOGOUT',
+  USER_CREATED = 'USER_CREATED',
+  USER_DELETED = 'USER_DELETED',
+  PASSWORD_RESET = 'PASSWORD_RESET',
+  DOCTOR_CREATED = 'DOCTOR_CREATED',
+  DOCTOR_DELETED = 'DOCTOR_DELETED',
+  PATIENT_CREATED = 'PATIENT_CREATED',
+  PATIENT_UPDATED = 'PATIENT_UPDATED',
+  APPOINTMENT_CREATED = 'APPOINTMENT_CREATED',
+  APPOINTMENT_UPDATED = 'APPOINTMENT_UPDATED',
+  APPOINTMENT_DELETED = 'APPOINTMENT_DELETED',
+  STATUS_CHANGED = 'STATUS_CHANGED',
+  CONTACT_CREATED = 'CONTACT_CREATED',
+  AGENDA_BLOCKED = 'AGENDA_BLOCKED',
+  AGENDA_CONFIG_UPDATED = 'AGENDA_CONFIG_UPDATED',
+  SETTINGS_UPDATED = 'SETTINGS_UPDATED'
+}
+
+export enum AuditSource {
+  WEB_APP = 'WEB_APP',
+  N8N_WEBHOOK = 'N8N_WEBHOOK',
+  WHATSAPP = 'WHATSAPP',
+  SYSTEM = 'SYSTEM'
+}
+
+export interface Organization {
+  id: string;
+  name: string;
+  accountType: AccountType;
+  ownerUserId: string;
+  maxDoctors: number;
 }
 
 export interface User {
@@ -164,168 +89,274 @@ export interface User {
   phone2?: string;
 }
 
-export interface Organization {
-  id: string;
-  accountType: AccountType;
-  name: string;
-  ownerUserId: string; 
-  maxDoctors: number;
-}
-
 export interface Doctor {
   id: string;
-  organizationId: string; 
+  organizationId: string;
   name: string;
   specialty: string;
-  color?: string; // Hex code or Tailwind class
-  avatar?: string;
-}
-
-export interface AvailableSlot {
-  id: string;
-  doctorId: string;
-  date: string; 
-  time: string; 
-  isBooked: boolean;
-  appointmentId?: string; 
-  appointment?: Appointment; 
+  color: string;
 }
 
 export interface Patient {
   id: string;
   organizationId: string;
   name: string;
-  cpf?: string;
   phone: string;
   email?: string;
-  birthDate?: string;
-  notes?: string;
-  
-  // Clinical Status fields
+  cpf?: string;
   status: PatientStatus;
   condition?: string;
   lastVisit?: string;
   nextStep?: string;
-
+  birthDate?: string;
   createdAt: string;
   updatedAt: string;
 }
 
 export interface Appointment {
   id: string;
-  clinicId: string; 
-  doctorId: string; 
-  slotId?: string;  
-  
+  clinicId: string;
+  doctorId: string;
   patientId: string;
-  patient?: Patient; 
-  
-  date: string; 
-  time: string; 
-  
+  patient?: Patient;
+  date: string;
+  time: string;
   status: AppointmentStatus;
-  procedure?: string; 
-  notes?: string;     
-  cancellationReason?: string;
-  
-  n8nProcessed?: boolean;
-  createdAt?: string;
+  procedure?: string;
+  notes?: string;
+  createdAt: string;
   updatedAt?: string;
-
-  // Legacy fields for migration support
-  patientName?: string;
-  patientPhone?: string;
+  n8nProcessed?: boolean;
+  slotId?: string;
 }
 
 export interface AgendaConfig {
   clinicId: string;
-  doctorId?: string; 
-  startHour: string; 
-  endHour: string;   
-  intervalMinutes: number; 
-  availableProcedures: string[]; 
+  doctorId?: string;
+  startHour: string;
+  endHour: string;
+  intervalMinutes: number;
+  availableProcedures: string[];
+}
+
+export interface DoctorAbsence {
+  id: string;
+  doctorId: string;
+  startDate: string;
+  endDate: string;
+  reason: string;
+  type: 'FERIAS' | 'LICENCA' | 'CONGRESSO' | 'OUTROS';
+  createdAt: string;
+}
+
+export interface DoctorAvailability {
+  id: string;
+  doctorId: string;
+  organizationId: string;
+  weekSchedule: {
+    [key in DayOfWeek]?: {
+      enabled: boolean;
+      startTime: string;
+      endTime: string;
+      intervalMinutes?: number;
+    };
+  };
+  absences: DoctorAbsence[];
+  advanceBookingDays?: number;
+  maxAppointmentsPerDay?: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AvailableSlot {
+  id: string;
+  doctorId: string;
+  date: string;
+  time: string;
+  isBooked: boolean;
+  isReserved: boolean;
+  appointment?: Appointment;
+  appointmentId?: string;
+}
+
+export interface RecommendedSlot {
+  slot: AvailableSlot;
+  score: number;
+  reason: string;
+}
+
+export interface AuditLog {
+  id: string;
+  organizationId: string;
+  userId: string;
+  userName?: string;
+  action: AuditAction;
+  source: AuditSource;
+  entityType: string;
+  entityId: string;
+  entityName?: string;
+  description: string;
+  oldValues?: any;
+  newValues?: any;
+  metadata?: any;
+  timestamp: string;
+  createdAt: string;
 }
 
 export interface ClinicSettings {
   clinicId: string;
-  n8nWebhookUrl?: string;       
-  evolutionInstanceName?: string; 
+  n8nWebhookUrl?: string;
+  n8nProductionMode?: boolean;
+  evolutionInstanceName?: string;
   evolutionApiKey?: string;
-  clinicToken?: string; 
-  apiToken?: string; 
-  n8nProductionMode?: boolean; 
+  clinicToken?: string;
+  apiToken?: string;
 }
 
-export interface Session {
+export interface WebhookLog {
   id: string;
-  userId: string;
-  deviceInfo: string;
-  lastActive: string;
+  event: string;
+  payload: any;
+  timestamp: string;
+  status: 'Pending' | 'Success' | 'Failed';
+  destination: string;
 }
 
-export interface N8NWebhookPayload {
-  event: 'STATUS_CHANGED' | 'APPOINTMENT_CREATED' | 'AGENDA_BLOCKED';
-  data: {
-    appointmentId?: string;
-    doctorName?: string;
-    patientName?: string;
-    patientPhone?: string;
-    reason?: string; 
-    notes?: string;
-    oldStatus?: string;
-    newStatus?: string;
-    date?: string;
-    time?: string;
+export interface WebhookQueueItem {
+  id: string;
+  url: string;
+  payload: any;
+  headers: any;
+  retryCount: number;
+  nextRetry: number;
+  createdAt: number;
+  status: 'PENDING' | 'FAILED' | 'SUCCESS';
+}
+
+export interface DashboardMetrics {
+  general: {
+    appointmentsThisMonth: number;
+    appointmentsLastMonth: number;
+    totalScheduled: number;
+    totalAttended: number;
+    totalNoShow: number;
+    totalCancelled: number;
+    attendanceRate: number;
+    noShowRate: number;
   };
+  automation: {
+    totalInteractions: number;
+    scheduledAutomatically: number;
+    attendedViaAutomation: number;
+    conversionRate: number;
+    efficiencyRate: number;
+    estimatedTimeSaved: number;
+  };
+  doctorStats: {
+    doctorId: string;
+    doctorName: string;
+    totalAppointments: number;
+    attended: number;
+    noShow: number;
+    attendanceRate: number;
+  }[];
+  topProcedures: {
+    procedure: string;
+    count: number;
+  }[];
+  timeline: {
+    date: string;
+    agendado: number;
+    atendido: number;
+    naoVeio: number;
+  }[];
+}
+
+export interface ClientHealthMetrics {
+  clientId: string;
+  clientName: string;
+  accountType: AccountType;
+  lastUsed: string;
+  appointmentsThisMonth: number;
+  automationsActive: boolean;
+  healthScore: 'healthy' | 'attention' | 'risk';
+  occupancyRate: number;
+  monthlyScheduled: number;
+  growthVsLastMonth: number;
+  availableSlots: number;
+  noShowRate: number;
+  webhookStatus: 'healthy' | 'error';
+  needsTrafficAnalysis: boolean;
+  weeklyContacts: number;
+  weeklyScheduled: number;
+  weeklyAttended: number;
+  weeklyCancelled: number;
+  monthlyContacts: number;
+  monthlyAttended: number;
+  monthlyCancelled: number;
+}
+
+export interface GlobalMetrics {
+  activeClients: number;
+  totalClients: number;
+  totalAppointmentsThisMonth: number;
+  growthRate: number;
+  automationSuccessRate: number;
+  totalAutomationsSent: number;
+  mrr: number;
+}
+
+export interface OwnerAlert {
+  id: string;
+  type: 'critical' | 'warning' | 'info';
+  clientName: string;
+  title: string;
+  message: string;
+  metricValue?: string;
+  actionType: 'CONTACT_PHONE' | 'CONTACT_EMAIL' | 'OPEN_CONFIG' | 'VIEW_REPORT';
+  actionPayload: string;
+}
+
+export type NotificationType = 'success' | 'error' | 'info' | 'warning' | 'critical';
+export type NotificationPriority = 'high' | 'medium' | 'low';
+
+export interface Notification {
+  id: string;
+  title: string;
+  message: string;
+  type: NotificationType;
+  priority: NotificationPriority;
+  clinicId: string;
+  targetUserId?: string;
+  targetRole?: UserRole[];
+  metadata?: any;
+  actionLink?: string;
+  read: boolean;
   timestamp: string;
-  clinicId: string; 
+}
+
+export interface SlotReservation {
+  id: string;
+  slotId: string;
+  doctorId: string;
+  date: string;
+  time: string;
+  clinicId: string;
+  reservedBy: 'WEB_APP' | 'N8N_WEBHOOK';
+  reservedAt: string;
+  expiresAt: string;
+  userId?: string;
+  sessionId: string;
 }
 
 export interface Column {
   id: AppointmentStatus;
   title: string;
   color: string;
-  count?: number;
 }
 
-// --- Analytics / Dashboard Types ---
-
-export interface ClientHealthMetrics {
-  clientId: string;
-  clientName: string;
-  accountType: 'CONSULTORIO' | 'CLINICA';
-  lastUsed: string; 
-  appointmentsThisMonth: number;
-  appointmentsThisWeek: number;
-  automationsActive: boolean;
-  webhookStatus: 'healthy' | 'warning' | 'critical';
-  healthScore: 'healthy' | 'attention' | 'risk'; 
-  
-  weeklyContacts: number;
-  weeklyScheduled: number;
-  weeklyAttended: number;
-  weeklyCancelled: number;
-  
-  monthlyContacts: number;
-  monthlyScheduled: number;
-  monthlyAttended: number;
-  monthlyCancelled: number;
-  
-  growthVsLastMonth: number; 
-  
-  avgAppointmentsPerDay: number;
-  availableSlots: number;
-  occupancyRate: number; 
-  noShowRate: number; 
-  needsTrafficAnalysis: boolean;
-}
-
-export interface GlobalMetrics {
-  totalClients: number;
-  activeClients: number;
-  totalAppointmentsThisMonth: number;
-  totalAutomationsSent: number;
-  automationSuccessRate: number;
-  mrr: number; 
-  growthRate: number; 
+export interface AvailabilityValidationResult {
+  isAvailable: boolean;
+  reason?: string;
+  suggestedDates?: string[];
 }

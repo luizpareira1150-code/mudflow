@@ -79,6 +79,7 @@ export const CRM: React.FC<CRMProps> = ({ user, doctors, selectedDoctorId, onDoc
   const handleDragStart = (e: React.DragEvent, id: string) => {
     setDraggedApptId(id);
     e.dataTransfer.effectAllowed = 'move';
+    // Ocultar imagem fantasma padrão se quiser customizar (opcional)
   };
 
   const handleDragOver = (e: React.DragEvent) => {
@@ -92,19 +93,27 @@ export const CRM: React.FC<CRMProps> = ({ user, doctors, selectedDoctorId, onDoc
     const appt = appointments.find(a => a.id === draggedApptId);
     if (!appt || appt.status === targetStatus) return;
 
-    // Snapshot for Rollback
-    const oldStatus = appt.status;
+    // --- OPTIMISTIC UPDATE START ---
+    // 1. Snapshot do estado anterior (para Rollback em caso de erro)
+    const previousAppt = { ...appt };
 
     try {
-        // 1. Optimistic UI Update (Instant Feedback)
+        // 2. Atualização Otimista: Atualiza a UI imediatamente
         setAppointments(prev => prev.map(a => 
             a.id === draggedApptId ? { ...a, status: targetStatus } : a
         ));
 
-        // 2. Backend Call (Logs generated automatically in dataService)
-        await dataService.updateAppointmentStatus(draggedApptId, targetStatus);
+        // 3. Chamada ao Servidor (Background)
+        const updatedAppt = await dataService.updateAppointmentStatus(draggedApptId, targetStatus);
         
-        showToast('success', `Status alterado para ${targetStatus.replace('_', ' ')}!`);
+        // 4. Sucesso: Sincronização Silenciosa
+        // Atualizamos com o objeto retornado pelo servidor para garantir que temos
+        // os dados mais recentes (ex: updatedAt, logs gerados no backend)
+        setAppointments(prev => prev.map(a => 
+            a.id === draggedApptId ? updatedAppt : a
+        ));
+
+        showToast('success', `Movido para ${targetStatus.replace('_', ' ')}`);
 
         // Log N8N simulation (Dev console only)
         if (targetStatus === AppointmentStatus.ATENDIDO) {
@@ -114,15 +123,16 @@ export const CRM: React.FC<CRMProps> = ({ user, doctors, selectedDoctorId, onDoc
         }
 
     } catch (error) {
-        // 3. Rollback UI on Error
+        // 5. Erro: Rollback (Reverter ao estado anterior)
         console.error("Drop failed:", error);
         setAppointments(prev => prev.map(a => 
-            a.id === draggedApptId ? { ...a, status: oldStatus } : a
+            a.id === draggedApptId ? previousAppt : a
         ));
         showToast('error', 'Erro ao atualizar status. Revertendo...');
     } finally {
         setDraggedApptId(null);
     }
+    // --- OPTIMISTIC UPDATE END ---
   };
 
   const openDetails = (appt: Appointment) => {

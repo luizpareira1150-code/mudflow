@@ -1,402 +1,405 @@
 
 import React, { useState, useEffect } from 'react';
-import { User, AuditLog, AuditSource } from '../types';
+import { User, AuditLog, AuditSource, AuditAction } from '../types';
 import { systemLogService } from '../services/mockSupabase';
-import { Search, Filter, RefreshCw, FileText, User as UserIcon, Calendar, Clock, ChevronDown, Activity, CalendarDays, Globe, Bot, Server, MessageSquare, Tag, Info } from 'lucide-react';
+import { 
+  Search, Filter, FileText, User as UserIcon, Calendar, 
+  Clock, ChevronDown, Activity, Globe, Bot, Server, 
+  MessageSquare, AlertTriangle, Download, AlertCircle, X, Check
+} from 'lucide-react';
+import { LogDetailsModal } from './LogDetailsModal';
 
 interface ActivityLogsProps {
   user: User;
 }
 
 export const ActivityLogs: React.FC<ActivityLogsProps> = ({ user }) => {
+  // Data State
   const [logs, setLogs] = useState<AuditLog[]>([]);
   const [loading, setLoading] = useState(true);
-  const [searchTerm, setSearchTerm] = useState('');
-  const [filterAction, setFilterAction] = useState('ALL');
-  const [filterPeriod, setFilterPeriod] = useState('ALL_TIME');
-
-  useEffect(() => {
-    loadLogs();
-  }, [user.clinicId]);
-
-  const loadLogs = async () => {
-    setLoading(true);
-    try {
-      const data = await systemLogService.getLogs(user.clinicId);
-      setLogs(data);
-    } catch (error) {
-      console.error(error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const checkDatePeriod = (dateStr: string, period: string) => {
-    const date = new Date(dateStr);
-    const now = new Date();
-    
-    if (period === 'ALL_TIME') return true;
-    
-    if (period === '7D') {
-        const sevenDaysAgo = new Date();
-        sevenDaysAgo.setDate(now.getDate() - 7);
-        sevenDaysAgo.setHours(0, 0, 0, 0);
-        return date >= sevenDaysAgo;
-    }
-    
-    if (period === '30D') {
-        const thirtyDaysAgo = new Date();
-        thirtyDaysAgo.setDate(now.getDate() - 30);
-        thirtyDaysAgo.setHours(0, 0, 0, 0);
-        return date >= thirtyDaysAgo;
-    }
-    
-    if (period === 'LAST_MONTH') {
-        const firstDayLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-        const lastDayLastMonth = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59);
-        return date >= firstDayLastMonth && date <= lastDayLastMonth;
-    }
-    
-    return true;
-  };
-
-  const filteredLogs = logs.filter(log => {
-    const matchesSearch = 
-      (log.userName || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
-      (log.entityName || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
-      log.description.toLowerCase().includes(searchTerm.toLowerCase());
-    
-    const matchesFilter = filterAction === 'ALL' || log.action === filterAction;
-    
-    const matchesPeriod = checkDatePeriod(log.timestamp, filterPeriod);
-    
-    return matchesSearch && matchesFilter && matchesPeriod;
+  const [stats, setStats] = useState({ totalLogs: 0, todayCount: 0, errorCount: 0, mostActiveUser: null as any });
+  
+  // Unified Filter State
+  const [filters, setFilters] = useState({
+    searchTerm: '',
+    action: '' as string,
+    source: '' as string,
+    startDate: '',
+    endDate: ''
   });
 
-  const uniqueActions = Array.from(new Set(logs.map(l => l.action)));
+  // Pagination State
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 15;
+
+  // Modal State
+  const [selectedLog, setSelectedLog] = useState<AuditLog | null>(null);
+  const [isDetailsOpen, setIsDetailsOpen] = useState(false);
+
+  // Initial Load & Filter Change
+  useEffect(() => {
+    const fetchLogs = async () => {
+      setLoading(true);
+      try {
+        const [logsData, statsData] = await Promise.all([
+            // Passa os filtros diretamente para o serviço (Backend Simulation)
+            systemLogService.getLogs(user.clinicId, filters),
+            systemLogService.getAuditStats(user.clinicId)
+        ]);
+        setLogs(logsData);
+        setStats(statsData);
+        setCurrentPage(1); // Reset page on filter change
+      } catch (error) {
+        console.error("Failed to load audit data", error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    // Debounce para busca textual
+    const timeoutId = setTimeout(() => {
+        fetchLogs();
+    }, 400);
+
+    return () => clearTimeout(timeoutId);
+  }, [user.clinicId, filters]);
+
+  // Client-side pagination (Backend pagination seria o próximo passo ideal)
+  const totalPages = Math.ceil(logs.length / itemsPerPage);
+  const currentLogs = logs.slice(
+    (currentPage - 1) * itemsPerPage,
+    currentPage * itemsPerPage
+  );
 
   const formatDate = (isoString: string) => {
     const date = new Date(isoString);
-    return {
-        day: date.toLocaleDateString('pt-BR'),
-        time: date.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
-    };
+    return new Intl.DateTimeFormat('pt-BR', { 
+      day: '2-digit', month: '2-digit', year: '2-digit',
+      hour: '2-digit', minute: '2-digit'
+    }).format(date);
   };
 
   const getSourceIcon = (source: AuditSource) => {
     switch (source) {
-        case AuditSource.WEB_APP:
-            return <Globe size={14} className="text-blue-500" />;
-        case AuditSource.N8N_WEBHOOK:
-            return <Bot size={14} className="text-purple-500" />;
-        case AuditSource.WHATSAPP:
-            return <MessageSquare size={14} className="text-green-500" />;
-        case AuditSource.SYSTEM:
-            return <Server size={14} className="text-slate-500" />;
-        default:
-            return <Activity size={14} className="text-gray-500" />;
+        case AuditSource.WEB_APP: return <Globe size={14} className="text-blue-500" />;
+        case AuditSource.N8N_WEBHOOK: return <Bot size={14} className="text-purple-500" />;
+        case AuditSource.WHATSAPP: return <MessageSquare size={14} className="text-green-500" />;
+        case AuditSource.SYSTEM: return <Server size={14} className="text-slate-500" />;
+        default: return <Activity size={14} className="text-gray-500" />;
     }
   };
 
-  const getSourceLabel = (source: AuditSource) => {
-      switch (source) {
-        case AuditSource.WEB_APP: return 'Web App';
-        case AuditSource.N8N_WEBHOOK: return 'N8N (Auto)';
-        case AuditSource.WHATSAPP: return 'WhatsApp';
-        case AuditSource.SYSTEM: return 'Sistema';
-        default: return 'Desconhecido';
-      }
+  const getActionIcon = (action: string) => {
+      if (action.includes('CREATED')) return <FileText size={18} />;
+      if (action.includes('DELETED')) return <X size={18} />;
+      if (action.includes('UPDATED')) return <Activity size={18} />;
+      return <Activity size={18} />;
+  }
+
+  const getActionColor = (action: string) => {
+      if (action.includes('CREATED')) return 'bg-green-50 text-green-700 border-green-100';
+      if (action.includes('DELETED')) return 'bg-red-50 text-red-700 border-red-100';
+      if (action.includes('UPDATED') || action.includes('CHANGED')) return 'bg-blue-50 text-blue-700 border-blue-100';
+      return 'bg-slate-50 text-slate-600 border-slate-100';
   };
 
-  const formatValueDiff = (oldVal?: Record<string, any>, newVal?: Record<string, any>) => {
-      if (!oldVal && !newVal) return null;
-      
-      const changes: string[] = [];
-      const allKeys = new Set([...Object.keys(oldVal || {}), ...Object.keys(newVal || {})]);
-      
-      allKeys.forEach(key => {
-          // Ignore internal fields
-          if (['id', 'clinicId', 'organizationId', 'patientId', 'doctorId', 'slotId', 'createdAt', 'updatedAt'].includes(key)) return;
-          
-          const v1 = oldVal ? oldVal[key] : undefined;
-          const v2 = newVal ? newVal[key] : undefined;
-          
-          // Simple loose equality check
-          if (JSON.stringify(v1) !== JSON.stringify(v2)) {
-             changes.push(key);
-          }
+  const getSourceBadge = (source: string) => {
+      return (
+        <div className="flex items-center gap-1.5 bg-slate-100 px-2 py-0.5 rounded text-[10px] font-bold text-slate-600 uppercase tracking-wide border border-slate-200">
+            {getSourceIcon(source as AuditSource)}
+            {source === 'WEB_APP' ? 'WEB' : source === 'N8N_WEBHOOK' ? 'BOT' : source}
+        </div>
+      );
+  }
+
+  const exportLogs = () => {
+      const headers = ['Data', 'Usuário', 'Origem', 'Ação', 'Descrição'];
+      const rows = logs.map(log => 
+          [log.timestamp, log.userName, log.source, log.action, log.description].join(',')
+      );
+      const csv = [headers.join(','), ...rows].join('\n');
+      const blob = new Blob([csv], { type: 'text/csv' });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'logs.csv';
+      a.click();
+  };
+
+  const clearFilters = () => {
+      setFilters({
+        searchTerm: '',
+        action: '',
+        source: '',
+        startDate: '',
+        endDate: ''
       });
-      
-      // If no relevant changes found but payloads exist, show generic info
-      if (changes.length === 0 && (oldVal || newVal)) {
-         return (
-             <div className="mt-1 text-xs text-slate-400 italic">
-                 Dados atualizados (sem campos críticos)
-             </div>
-         );
-      }
-
-      return (
-          <div className="mt-2 space-y-1">
-             {changes.slice(0, 3).map(key => {
-                 const v1 = oldVal ? oldVal[key] : undefined;
-                 const v2 = newVal ? newVal[key] : undefined;
-                 
-                 const formatVal = (v: any) => {
-                     if (typeof v === 'boolean') return v ? 'Sim' : 'Não';
-                     if (v === null || v === undefined) return 'Vazio';
-                     return String(v);
-                 };
-
-                 return (
-                    <div key={key} className="text-xs flex gap-2 items-center bg-slate-50 border border-slate-100 p-1.5 rounded w-fit max-w-full">
-                        <span className="font-bold text-slate-500 uppercase text-[10px]">{key}</span>
-                        
-                        {v1 !== undefined && (
-                            <>
-                                <span className="text-red-500 line-through truncate max-w-[80px]" title={String(v1)}>
-                                    {formatVal(v1)}
-                                </span>
-                                <span className="text-slate-300">→</span>
-                            </>
-                        )}
-                        
-                        {v2 !== undefined && (
-                            <span className="text-green-600 font-medium truncate max-w-[100px]" title={String(v2)}>
-                                {formatVal(v2)}
-                            </span>
-                        )}
-                    </div>
-                 );
-             })}
-             {changes.length > 3 && (
-                 <span className="text-[10px] text-slate-400">e mais {changes.length - 3} campos...</span>
-             )}
-          </div>
-      );
   };
 
-  const renderMetadata = (metadata?: Record<string, any>) => {
-      if (!metadata) return null;
-      
-      // Label mapping for better UX
-      const labelMap: Record<string, string> = {
-        createdVia: 'Via',
-        reason: 'Motivo',
-        count: 'Qtd',
-        patientName: 'Paciente',
-        doctorName: 'Dr.',
-        cancelledBy: 'Cancelado por',
-        date: 'Data',
-        time: 'Hora',
-        productionModeChanged: 'Modo Produção',
-        settingType: 'Tipo',
-        changedBy: 'Por',
-        source: 'Origem',
-        message: 'Msg',
-        oldStatus: 'Antigo',
-        newStatus: 'Novo',
-        appointmentDate: 'Data Agend.',
-        appointmentTime: 'Hora Agend.'
-      };
-
-      return (
-          <div className="flex flex-wrap gap-2 mt-2">
-              {Object.entries(metadata).map(([key, value]) => {
-                  if (value === undefined || value === null) return null;
-                  
-                  let displayValue = String(value);
-                  if (key === 'createdVia') displayValue = value === 'contact_flow' ? 'Fluxo CRM' : 'Reserva Direta';
-                  if (typeof value === 'boolean') displayValue = value ? 'Sim' : 'Não';
-
-                  // Highlight important metadata
-                  const isImportant = ['reason', 'createdVia', 'source'].includes(key);
-                  const bgClass = isImportant ? 'bg-blue-50 text-blue-700 border-blue-100' : 'bg-slate-50 text-slate-600 border-slate-100';
-
-                  return (
-                      <span key={key} className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium border ${bgClass}`}>
-                          <span className="opacity-70 uppercase text-[9px]">{labelMap[key] || key}:</span>
-                          <span className="truncate max-w-[150px]" title={String(value)}>{displayValue}</span>
-                      </span>
-                  );
-              })}
-          </div>
-      );
-  };
+  const hasActiveFilters = Object.values(filters).some(val => val !== '');
 
   return (
-    <div className="p-8 h-screen flex flex-col animate-in fade-in duration-500">
-      <header className="flex justify-between items-center mb-8">
+    <div className="p-8 h-screen flex flex-col animate-in fade-in duration-500 bg-slate-50/50">
+      
+      <header className="flex justify-between items-center mb-6">
         <div>
           <h2 className="text-3xl font-bold text-slate-800 flex items-center gap-3">
              <Activity className="text-blue-600" size={32} />
-             Auditoria Corporativa (Logs)
+             Auditoria & Logs
           </h2>
           <p className="text-slate-500 mt-1">
-             Rastreabilidade completa de todas as ações para compliance e segurança.
+             Histórico completo de segurança e operações (LGPD Compliance).
           </p>
         </div>
-        <button 
-            onClick={loadLogs}
-            className="flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 text-slate-600 rounded-lg hover:bg-slate-50 transition-colors shadow-sm"
-        >
-            <RefreshCw size={18} className={loading ? 'animate-spin' : ''} />
-            Atualizar
-        </button>
       </header>
 
-      {/* Controls */}
-      <div className="bg-white p-4 rounded-xl border border-slate-200 mb-6 flex flex-col lg:flex-row gap-4 items-center shadow-sm">
-        <div className="flex-1 relative w-full">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={20} />
+      {/* Stats Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+          <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between">
+              <div>
+                  <p className="text-xs font-bold text-slate-500 uppercase">Total Eventos</p>
+                  <p className="text-2xl font-bold text-slate-800">{stats.totalLogs}</p>
+              </div>
+              <div className="p-3 bg-blue-50 rounded-lg text-blue-600"><FileText size={20} /></div>
+          </div>
+          <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between">
+              <div>
+                  <p className="text-xs font-bold text-slate-500 uppercase">Atividade Hoje</p>
+                  <p className="text-2xl font-bold text-slate-800">{stats.todayCount}</p>
+              </div>
+              <div className="p-3 bg-green-50 rounded-lg text-green-600"><Calendar size={20} /></div>
+          </div>
+          <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between">
+              <div>
+                  <p className="text-xs font-bold text-slate-500 uppercase">Erros/Alertas</p>
+                  <p className="text-2xl font-bold text-red-600">{stats.errorCount}</p>
+              </div>
+              <div className="p-3 bg-red-50 rounded-lg text-red-600"><AlertTriangle size={20} /></div>
+          </div>
+          <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between">
+              <div>
+                  <p className="text-xs font-bold text-slate-500 uppercase">Usuário +Ativo</p>
+                  <p className="text-lg font-bold text-slate-800 truncate max-w-[120px]" title={stats.mostActiveUser?.name}>
+                      {stats.mostActiveUser?.name || '-'}
+                  </p>
+                  <p className="text-xs text-slate-400">{stats.mostActiveUser?.count || 0} ações</p>
+              </div>
+              <div className="p-3 bg-purple-50 rounded-lg text-purple-600"><UserIcon size={20} /></div>
+          </div>
+      </div>
+
+      <div className="bg-white p-6 rounded-xl border border-slate-200 mb-6 shadow-sm">
+        <div className="flex items-center gap-2 mb-4 text-sm font-bold text-slate-700">
+           <Filter size={18} className="text-blue-600" />
+           Filtros Avançados
+           {hasActiveFilters && (
+               <button onClick={clearFilters} className="ml-auto text-xs text-red-500 hover:underline">
+                   Limpar Filtros
+               </button>
+           )}
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          
+          {/* Data Inicial */}
+          <div>
+            <label className="block text-xs font-bold text-gray-500 mb-1">Data Inicial</label>
             <input 
-                type="text" 
-                value={searchTerm}
-                onChange={e => setSearchTerm(e.target.value)}
-                placeholder="Buscar por ator, entidade ou descrição..." 
-                className="w-full pl-10 pr-4 py-2.5 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all text-sm text-slate-700 placeholder-slate-400"
+              type="date"
+              value={filters.startDate}
+              onChange={(e) => setFilters({...filters, startDate: e.target.value})}
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500"
             />
+          </div>
+
+          {/* Data Final */}
+          <div>
+            <label className="block text-xs font-bold text-gray-500 mb-1">Data Final</label>
+            <input 
+              type="date"
+              value={filters.endDate}
+              onChange={(e) => setFilters({...filters, endDate: e.target.value})}
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+          
+          {/* Tipo de Ação */}
+          <div>
+            <label className="block text-xs font-bold text-gray-500 mb-1">Tipo de Ação</label>
+            <div className="relative">
+              <select 
+                value={filters.action}
+                onChange={(e) => setFilters({...filters, action: e.target.value as AuditAction})}
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500 appearance-none"
+              >
+                <option value="">Todas</option>
+                <option value="CONTACT_CREATED">Contato Criado</option>
+                <option value="APPOINTMENT_CREATED">Agendamento Criado</option>
+                <option value="APPOINTMENT_UPDATED">Agendamento Atualizado</option>
+                <option value="APPOINTMENT_DELETED">Agendamento Cancelado</option>
+                <option value="STATUS_CHANGED">Mudança de Status</option>
+                <option value="PATIENT_CREATED">Paciente Criado</option>
+                <option value="PATIENT_UPDATED">Paciente Atualizado</option>
+                <option value="USER_LOGIN">Login</option>
+                <option value="USER_LOGOUT">Logout</option>
+                <option value="SETTINGS_UPDATED">Configurações Alteradas</option>
+              </select>
+              <ChevronDown size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+            </div>
+          </div>
+          
+          {/* Origem */}
+          <div>
+            <label className="block text-xs font-bold text-gray-500 mb-1">Origem</label>
+            <div className="relative">
+              <select 
+                value={filters.source}
+                onChange={(e) => setFilters({...filters, source: e.target.value as AuditSource})}
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500 appearance-none"
+              >
+                <option value="">Todas</option>
+                <option value="WEB_APP">Manual (Interface)</option>
+                <option value="N8N_WEBHOOK">Automação (N8N)</option>
+                <option value="WHATSAPP">WhatsApp</option>
+                <option value="SYSTEM">Sistema</option>
+              </select>
+              <ChevronDown size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+            </div>
+          </div>
+        </div>
+
+        {/* Busca por Texto */}
+        <div className="mt-4">
+          <div className="relative">
+            <Search size={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+            <input 
+              type="text"
+              value={filters.searchTerm}
+              onChange={(e) => setFilters({...filters, searchTerm: e.target.value})}
+              placeholder="Buscar por descrição, usuário ou ID..."
+              className="w-full border border-gray-200 rounded-lg pl-10 pr-4 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+        </div>
+      </div>
+
+      {/* AÇÕES */}
+      <div className="flex justify-between items-center mb-4">
+        <p className="text-sm text-gray-500">
+          Mostrando <strong>{currentLogs.length}</strong> de <strong>{logs.length}</strong> registros encontrados
+        </p>
+        <button 
+          onClick={exportLogs}
+          className="flex items-center gap-2 px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-black transition-colors text-sm font-medium"
+        >
+          <Download size={16} />
+          Exportar CSV
+        </button>
+      </div>
+
+      {/* LISTA DE LOGS */}
+      <div className="flex-1 bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden flex flex-col">
+        <div className="overflow-y-auto flex-1">
+          {loading ? (
+            <div className="flex items-center justify-center h-64">
+              <div className="flex flex-col items-center gap-3">
+                <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+                <p className="text-gray-400 text-sm">Carregando logs...</p>
+              </div>
+            </div>
+          ) : currentLogs.length === 0 ? (
+            <div className="flex items-center justify-center h-64">
+              <div className="text-center">
+                <AlertCircle size={48} className="mx-auto text-gray-300 mb-4" />
+                <p className="text-gray-400">Nenhum log encontrado com os filtros aplicados</p>
+              </div>
+            </div>
+          ) : (
+            <div className="divide-y divide-gray-100">
+              {currentLogs.map((log) => (
+                <div 
+                  key={log.id}
+                  onClick={() => {
+                    setSelectedLog(log);
+                    setIsDetailsOpen(true);
+                  }}
+                  className="p-4 hover:bg-gray-50 transition-colors cursor-pointer group"
+                >
+                  <div className="flex items-start gap-4">
+                    {/* Ícone da Ação */}
+                    <div className={`p-2 rounded-lg ${getActionColor(log.action)} border`}>
+                      {getActionIcon(log.action)}
+                    </div>
+                    
+                    {/* Conteúdo */}
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-start justify-between mb-1">
+                        <p className="font-medium text-gray-800 group-hover:text-blue-600 transition-colors">
+                          {log.description}
+                        </p>
+                        {getSourceBadge(log.source)}
+                      </div>
+                      
+                      <div className="flex items-center gap-3 text-xs text-gray-500">
+                        <span className="flex items-center gap-1">
+                          <Clock size={12} />
+                          {formatDate(log.timestamp)}
+                        </span>
+                        {log.userName && (
+                          <>
+                            <span>•</span>
+                            <span className="flex items-center gap-1">
+                              <UserIcon size={12} />
+                              {log.userName}
+                            </span>
+                          </>
+                        )}
+                        <span>•</span>
+                        <span className="font-mono text-gray-400">
+                          {log.entityType}:{log.entityId.slice(0, 8)}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
         
-        <div className="flex gap-4 w-full lg:w-auto">
-            {/* Period Filter */}
-            <div className="relative flex-1 lg:min-w-[200px]">
-                <div className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none">
-                    <CalendarDays size={18} />
-                </div>
-                <select
-                    value={filterPeriod}
-                    onChange={e => setFilterPeriod(e.target.value)}
-                    className="w-full pl-10 pr-8 py-2.5 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/20 appearance-none text-sm cursor-pointer text-slate-700 font-medium"
-                >
-                    <option value="ALL_TIME">Todo o período</option>
-                    <option value="7D">Últimos 7 dias</option>
-                    <option value="30D">Últimos 30 dias</option>
-                    <option value="LAST_MONTH">Mês passado</option>
-                </select>
-                <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
-            </div>
-
-            {/* Action Filter */}
-            <div className="relative flex-1 lg:min-w-[200px]">
-                <div className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none">
-                    <Filter size={18} />
-                </div>
-                <select
-                    value={filterAction}
-                    onChange={e => setFilterAction(e.target.value)}
-                    className="w-full pl-10 pr-8 py-2.5 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/20 appearance-none text-sm cursor-pointer text-slate-700 font-medium"
-                >
-                    <option value="ALL">Todas as Ações</option>
-                    {uniqueActions.map((action: string) => (
-                        <option key={action} value={action}>{action}</option>
-                    ))}
-                </select>
-                <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
-            </div>
-        </div>
+        {/* PAGINAÇÃO */}
+        {totalPages > 1 && (
+          <div className="border-t border-gray-200 p-4 flex items-center justify-between bg-gray-50">
+            <button 
+              onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+              disabled={currentPage === 1}
+              className="px-4 py-2 border border-gray-200 rounded-lg text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed hover:bg-white transition-colors"
+            >
+              Anterior
+            </button>
+            
+            <span className="text-sm text-gray-600">
+              Página <strong>{currentPage}</strong> de <strong>{totalPages}</strong>
+            </span>
+            
+            <button 
+              onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+              disabled={currentPage === totalPages}
+              className="px-4 py-2 border border-gray-200 rounded-lg text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed hover:bg-white transition-colors"
+            >
+              Próxima
+            </button>
+          </div>
+        )}
       </div>
 
-      {/* Logs Table */}
-      <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden flex-1 flex flex-col">
-        <div className="overflow-y-auto flex-1 custom-scrollbar">
-            <table className="w-full text-left border-collapse">
-                <thead className="bg-slate-50 border-b border-slate-200 sticky top-0 z-10">
-                    <tr>
-                        <th className="px-6 py-4 font-semibold text-slate-600 text-xs uppercase tracking-wider">Data / Hora</th>
-                        <th className="px-6 py-4 font-semibold text-slate-600 text-xs uppercase tracking-wider">Ator (Quem)</th>
-                        <th className="px-6 py-4 font-semibold text-slate-600 text-xs uppercase tracking-wider">Origem</th>
-                        <th className="px-6 py-4 font-semibold text-slate-600 text-xs uppercase tracking-wider">Ação</th>
-                        <th className="px-6 py-4 font-semibold text-slate-600 text-xs uppercase tracking-wider">Detalhes (O que)</th>
-                    </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                    {filteredLogs.length === 0 ? (
-                        <tr>
-                            <td colSpan={5} className="px-6 py-12 text-center text-slate-400">
-                                <FileText size={48} className="mx-auto mb-3 opacity-20" />
-                                <p className="font-medium">Nenhum registro de auditoria encontrado.</p>
-                                <p className="text-sm">Tente alterar os filtros de busca ou período.</p>
-                            </td>
-                        </tr>
-                    ) : (
-                        filteredLogs.map((log) => {
-                            const { day, time } = formatDate(log.timestamp);
-                            return (
-                                <tr key={log.id} className="hover:bg-slate-50 transition-colors group">
-                                    <td className="px-6 py-4 whitespace-nowrap align-top">
-                                        <div className="flex flex-col">
-                                            <div className="flex items-center gap-1.5 text-slate-700 font-medium text-sm">
-                                                <Calendar size={14} className="text-slate-400" />
-                                                {day}
-                                            </div>
-                                            <div className="flex items-center gap-1.5 text-slate-500 text-xs mt-0.5">
-                                                <Clock size={14} className="text-slate-400" />
-                                                {time}
-                                            </div>
-                                        </div>
-                                    </td>
-                                    <td className="px-6 py-4 align-top">
-                                        <div className="flex items-center gap-3">
-                                            <div className={`w-8 h-8 rounded-full flex items-center justify-center text-slate-500 shrink-0 ${
-                                                log.source === AuditSource.N8N_WEBHOOK ? 'bg-purple-100 text-purple-600' : 
-                                                log.source === AuditSource.WHATSAPP ? 'bg-green-100 text-green-600' :
-                                                'bg-slate-100'
-                                            }`}>
-                                                {log.source === AuditSource.N8N_WEBHOOK ? <Bot size={16} /> : 
-                                                 log.source === AuditSource.WHATSAPP ? <MessageSquare size={16} /> :
-                                                 <UserIcon size={16} />}
-                                            </div>
-                                            <div>
-                                                <p className="text-sm font-semibold text-slate-800">{log.userName || 'Sistema'}</p>
-                                                <p className="text-xs text-slate-400 truncate w-32" title={log.userId}>
-                                                    ID: {(log.userId || '').substring(0,8)}...
-                                                </p>
-                                            </div>
-                                        </div>
-                                    </td>
-                                    <td className="px-6 py-4 align-top">
-                                        <div className="flex items-center gap-1.5 border border-slate-200 bg-white rounded-md px-2 py-1 w-fit">
-                                            {getSourceIcon(log.source)}
-                                            <span className="text-xs font-medium text-slate-600">
-                                                {getSourceLabel(log.source)}
-                                            </span>
-                                        </div>
-                                    </td>
-                                    <td className="px-6 py-4 align-top">
-                                        <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wide
-                                            ${log.action.includes('CREATED') ? 'bg-green-100 text-green-700' : 
-                                              log.action.includes('DELETED') ? 'bg-red-100 text-red-700' :
-                                              log.action.includes('UPDATED') || log.action.includes('CHANGED') ? 'bg-blue-100 text-blue-700' :
-                                              'bg-slate-100 text-slate-600'}
-                                        `}>
-                                            {log.action.replace(/_/g, ' ')}
-                                        </span>
-                                    </td>
-                                    <td className="px-6 py-4 align-top">
-                                        <div>
-                                            <div className="flex items-center gap-1 text-sm font-bold text-slate-800">
-                                                <span className="text-slate-400 font-normal text-xs uppercase mr-1">{log.entityType}:</span>
-                                                {log.entityName || log.entityId}
-                                            </div>
-                                            <p className="text-sm text-slate-600 mt-0.5">{log.description}</p>
-                                            
-                                            {formatValueDiff(log.oldValues, log.newValues)}
-                                            {renderMetadata(log.metadata)}
-                                        </div>
-                                    </td>
-                                </tr>
-                            );
-                        })
-                    )}
-                </tbody>
-            </table>
-        </div>
-        <div className="bg-slate-50 p-3 border-t border-slate-200 text-center text-xs text-slate-400 flex justify-between px-6">
-            <span>Mostrando {filteredLogs.length} registros</span>
-            <span>Período: {filterPeriod === 'ALL_TIME' ? 'Todo o período' : filterPeriod === '7D' ? 'Últimos 7 dias' : filterPeriod === '30D' ? 'Últimos 30 dias' : 'Mês Passado'}</span>
-        </div>
-      </div>
+      {/* MODAL DE DETALHES */}
+      {isDetailsOpen && selectedLog && (
+        <LogDetailsModal 
+          log={selectedLog}
+          onClose={() => setIsDetailsOpen(false)}
+        />
+      )}
     </div>
   );
 };
