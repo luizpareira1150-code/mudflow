@@ -1,4 +1,5 @@
 
+
 export enum ViewState {
   Dashboard = 'Dashboard',
   Agenda = 'Agenda',
@@ -14,6 +15,44 @@ export interface WebhookLog {
   timestamp: string;
   status: 'Success' | 'Pending' | 'Failed';
   destination: string;
+}
+
+// ==========================================
+// NOTIFICATIONS
+// ==========================================
+
+export type NotificationType = 'success' | 'info' | 'warning' | 'error' | 'critical';
+export type NotificationPriority = 'low' | 'medium' | 'high';
+
+export interface Notification {
+  id: string;
+  title: string;
+  message: string;
+  type: NotificationType;
+  priority: NotificationPriority;
+  timestamp: string;
+  read: boolean;
+  
+  // Routing/Targeting
+  targetUserId?: string; // Specific user
+  targetRole?: UserRole[]; // Broadcast to role
+  clinicId: string; // Tenant isolation
+
+  // Context
+  actionLink?: string; // e.g., 'view:Agenda'
+  metadata?: {
+    appointmentId?: string;
+    patientId?: string;
+    patientName?: string;
+    reason?: string;
+    date?: string;
+    [key: string]: any;
+  };
+}
+
+export interface NotificationPreferences {
+  soundEnabled: boolean;
+  popupEnabled: boolean;
 }
 
 // ==========================================

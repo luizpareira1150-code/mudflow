@@ -1,7 +1,7 @@
-
-import { ClinicSettings, AppointmentStatus, AuditAction, AuditSource } from '../types';
+import { ClinicSettings, AppointmentStatus, AuditAction, AuditSource, UserRole } from '../types';
 import { N8NWebhookSchema } from '../utils/validationSchemas';
 import { validateSafe } from '../utils/validator';
+import { notificationService } from './notificationService';
 
 // Gera token único para cada clínica
 export const generateApiToken = (clinicId: string): string => {
@@ -41,402 +41,191 @@ export interface N8NOutgoingPayload {
     userId?: string;
     email?: string;
     username?: string;
-    requestTime?: string;
+    requestTime?: string
+    
+    // Context
+    [key: string]: any;
   };
-  
-  // Contexto completo para N8N processar
-  context: {
-    evolutionApi: {
-      instanceName: string;
-      apiKey: string;
-      baseUrl?: string;
-    };
-    clinic: {
-      id: string;
-      name: string;
-      timezone: string;
-    };
-    doctor: {
-      id: string;
-      name: string;
-      specialty: string;
-    };
-    timestamp: string;
-  };
+  context?: any;
 }
 
-// Interface para payloads RECEBIDOS do N8N
-export interface N8NIncomingPayload {
-  action: 'CREATE_APPOINTMENT' | 'UPDATE_STATUS' | 'BLOCK_SCHEDULE' | 'CREATE_PATIENT_CONTACT';
-  authToken: string; // Token de segurança da clínica
-  clinicId: string;
+export const N8NIntegrationService = {
   
-  // Dados específicos por ação
-  data: {
-    // Para CREATE_APPOINTMENT
-    doctorId?: string;
-    patientName?: string;
-    patientPhone?: string;
-    date?: string;
-    time?: string;
-    procedure?: string;
-    notes?: string;
-    
-    // Para UPDATE_STATUS
-    appointmentId?: string;
-    newStatus?: string;
-    
-    // Para BLOCK_SCHEDULE
-    startHour?: string;
-    endHour?: string;
-    
-    // Para CREATE_PATIENT_CONTACT
-    source?: 'whatsapp' | 'phone' | 'website';
-    message?: string;
-  };
-}
+  // Envia dados para o N8N (Outbound)
+  sendToN8N: async (payload: N8NOutgoingPayload, settings: ClinicSettings) => {
+    if (!settings.n8nWebhookUrl) return;
 
-// Serviço de Integração N8N
-export class N8NIntegrationService {
-  
-  // ============================================================
-  // HELPERS
-  // ============================================================
+    // Se não estiver em modo produção, apenas loga
+    if (!settings.n8nProductionMode) {
+      console.group('🚀 [N8N Simulation] Webhook Triggered');
+      console.log('Target URL:', settings.n8nWebhookUrl);
+      console.log('Event:', payload.event);
+      console.log('Payload:', payload);
+      console.groupEnd();
+      return;
+    }
 
-  // Helper to log actions via injected dependency
-  private static async logN8NAction(
-    dataService: any, 
-    params: {
-        action: AuditAction;
-        entityType: string;
-        entityId: string;
-        organizationId: string;
-        data: any;
-    }
-  ) {
-    if (dataService.logEvent) {
-        await dataService.logEvent({
-            action: params.action,
-            entityType: params.entityType,
-            entityId: params.entityId,
-            organizationId: params.organizationId,
-            newValues: params.data,
-            metadata: {
-                source: 'whatsapp_automation',
-                processedByN8N: true
-            }
-        });
-    }
-  }
-
-  // ============================================================
-  // ENVIAR DADOS PARA N8N (Sistema → N8N)
-  // ============================================================
-  
-  static async sendToN8N(
-    payload: N8NOutgoingPayload,
-    settings: ClinicSettings
-  ): Promise<boolean> {
-    
-    // Validação: Webhook configurado?
-    if (!settings.n8nWebhookUrl) {
-      console.warn('[N8N] Webhook não configurado para esta clínica.');
-      return false;
-    }
-    
-    // Validação: Evolution API configurada?
-    if (!settings.evolutionInstanceName || !settings.evolutionApiKey) {
-      console.warn('[N8N] Evolution API não configurada. Algumas automações podem falhar.');
-    }
-    
-    // Log colorido no console (ambiente de desenvolvimento)
-    console.group(`🚀 [N8N] Enviando Webhook`);
-    console.log(`%c📍 URL: ${settings.n8nWebhookUrl}`, 'color: #8b5cf6; font-weight: bold');
-    console.log(`%c📦 Evento: ${payload.event}`, 'color: #3b82f6; font-weight: bold');
-    console.log(`%c👤 Paciente: ${payload.data.patientName || 'N/A'}`, 'color: #10b981');
-    console.log(`%c🩺 Médico: ${payload.context.doctor.name}`, 'color: #06b6d4');
-    console.log(`%c📱 Evolution Instance: ${payload.context.evolutionApi.instanceName}`, 'color: #f59e0b');
-    console.table({
-      'Clinic ID': payload.context.clinic.id,
-      'Clinic Name': payload.context.clinic.name,
-      'Timestamp': payload.context.timestamp,
-      'Has Evolution Key': !!payload.context.evolutionApi.apiKey
-    });
-    console.groupEnd();
-    
     try {
-      // ✅ DECISÃO BASEADA EM CONFIGURAÇÃO
-      if (!settings.n8nProductionMode) {
-        // Modo DESENVOLVIMENTO: Apenas simula
-        console.log('%c🧪 [DEV MODE] Webhook simulado - não foi enviado', 'color: #f59e0b; font-weight: bold; font-size: 12px;');
-        await new Promise(resolve => setTimeout(resolve, 500));
-        return true;
-      }
-      
-      // Modo PRODUÇÃO: Envia de verdade
-      console.log('%c🚀 [PROD MODE] Enviando webhook real...', 'color: #10b981; font-weight: bold; font-size: 12px;');
-      
       const response = await fetch(settings.n8nWebhookUrl, {
         method: 'POST',
-        headers: { 
+        headers: {
           'Content-Type': 'application/json',
-          'User-Agent': 'MedFlow/1.0'
+          'X-Clinic-Token': settings.clinicToken || '',
+          'X-Api-Token': settings.apiToken || ''
         },
         body: JSON.stringify(payload)
       });
-      
-      if (response.ok) {
-        console.log('%c✅ Webhook enviado com sucesso!', 'color: #10b981; font-weight: bold;');
-        return true;
-      } else {
-        console.error(`❌ Erro HTTP ${response.status}: ${response.statusText}`);
-        return false;
+
+      if (!response.ok) {
+        throw new Error(`N8N responded with ${response.status}`);
       }
-      
     } catch (error) {
-      console.error('[N8N] Erro ao enviar webhook:', error);
-      return false;
+      console.error('Failed to send webhook to N8N:', error);
     }
-  }
-  
-  // ============================================================
-  // RECEBER DADOS DO N8N (N8N → Sistema)
-  // ============================================================
-  
-  static async receiveFromN8N(
-    payload: N8NIncomingPayload,
-    validTokens: Map<string, string>, // Map<clinicId, token>
-    dataService: any // Dependency Injection to avoid circular imports
-  ): Promise<{ success: boolean; message: string; data?: any }> {
-    
-    console.group(`📥 [N8N] Webhook Recebido`);
-    console.log(`%c🔐 Validando autenticação...`, 'color: #f59e0b; font-weight: bold');
+  },
+
+  // Recebe dados do N8N (Inbound Simulation)
+  receiveFromN8N: async (
+    payload: { action: string; data: any; clinicId: string; authToken: string }, 
+    validTokens: Map<string, string>,
+    context: any // Injected DataService to avoid circular dependencies
+  ) => {
     
     // 1. Validação de Segurança
     const expectedToken = validTokens.get(payload.clinicId);
-    
-    if (!expectedToken) {
-      console.error(`❌ Clínica ${payload.clinicId} não encontrada`);
-      console.groupEnd();
-      return { success: false, message: 'Clínica não encontrada' };
+    if (!expectedToken || payload.authToken !== expectedToken) {
+      throw new Error('Acesso Negado: Token de autenticação inválido.');
     }
-    
-    if (payload.authToken !== expectedToken) {
-      console.error(`❌ Token inválido para clínica ${payload.clinicId}`);
-      console.groupEnd();
-      return { success: false, message: 'Token de autenticação inválido' };
-    }
-    
-    console.log(`%c✅ Autenticação válida`, 'color: #10b981; font-weight: bold');
 
-    // 2. Validação de Schema (ZOD) - Proteção contra dados malformados
+    // 2. Validação do Payload
     const validation = validateSafe(N8NWebhookSchema, payload);
     if (!validation.success) {
-        console.error(`❌ Payload inválido:`, validation.errors);
-        console.groupEnd();
-        return { success: false, message: `Payload inválido: ${validation.errors?.join(', ')}` };
+      throw new Error(`Payload Inválido: ${validation.errors?.join(', ')}`);
     }
 
-    console.log(`%c🎯 Ação: ${payload.action}`, 'color: #3b82f6; font-weight: bold');
-    
-    // 3. Roteamento de Ação
-    try {
-      let result;
-      
-      switch (payload.action) {
-        case 'CREATE_APPOINTMENT':
-          result = await this.handleCreateAppointment(payload, dataService);
-          break;
-          
-        case 'UPDATE_STATUS':
-          result = await this.handleUpdateStatus(payload, dataService);
-          break;
-          
-        case 'BLOCK_SCHEDULE':
-          result = await this.handleBlockSchedule(payload, dataService);
-          break;
-          
-        case 'CREATE_PATIENT_CONTACT':
-          result = await this.handleCreateContact(payload, dataService);
-          break;
-          
-        default:
-          console.error(`❌ Ação desconhecida: ${payload.action}`);
-          console.groupEnd();
-          return { success: false, message: 'Ação não reconhecida' };
+    const { action, data } = validation.data as any;
+
+    // 3. Processamento da Ação
+    switch (action) {
+      case 'CREATE_APPOINTMENT': {
+        // Criar Paciente se não existir
+        const patient = await context.getOrCreatePatient({
+           name: data.patientName || 'Paciente (Via WhatsApp)',
+           phone: data.patientPhone || '',
+           cpf: data.patientCPF,
+           organizationId: payload.clinicId
+        }, AuditSource.N8N_WEBHOOK);
+
+        // Criar Agendamento
+        const appt = await context.createAppointment({
+            clinicId: payload.clinicId,
+            doctorId: data.doctorId,
+            patientId: patient.id,
+            date: data.date,
+            time: data.time,
+            status: AppointmentStatus.AGENDADO,
+            procedure: data.procedure || 'Agendamento via Bot',
+            notes: data.notes
+        }, AuditSource.N8N_WEBHOOK);
+
+        // --- NOTIFICATION TRIGGER ---
+        // Notify Secretary about new bot appointment
+        await notificationService.notify({
+            title: 'Novo Agendamento (Bot)',
+            message: `${patient.name} agendou para ${data.date} às ${data.time} via WhatsApp.`,
+            type: 'info',
+            clinicId: payload.clinicId,
+            targetRole: [UserRole.SECRETARY],
+            priority: 'medium',
+            actionLink: 'view:Agenda',
+            metadata: {
+                appointmentId: appt.id,
+                patientId: patient.id,
+                patientName: patient.name,
+                source: 'WhatsApp Bot'
+            }
+        });
+
+        return { success: true, id: appt.id, message: 'Agendamento criado via N8N' };
       }
-      
-      console.log(`%c✅ Ação processada com sucesso`, 'color: #10b981; font-weight: bold');
-      console.groupEnd();
-      return result;
-      
-    } catch (error: any) {
-      console.error(`❌ Erro ao processar ação:`, error);
-      console.groupEnd();
-      return { success: false, message: error.message || 'Erro interno' };
-    }
-  }
-  
-  // ============================================================
-  // HANDLERS DE AÇÕES (chamados pelo N8N)
-  // ============================================================
-  
-  private static async handleCreateAppointment(payload: N8NIncomingPayload, dataService: any) {
-    const { doctorId, patientName, patientPhone, date, time, procedure, notes } = payload.data;
-    
-    // Validações
-    if (!doctorId || !patientName || !patientPhone || !date || !time) {
-      return { success: false, message: 'Dados obrigatórios ausentes' };
-    }
-    
-    console.log(`📝 Criando agendamento para ${patientName} em ${date} às ${time}`);
-    
-    // 1. Get or Create Patient (NEW LOGIC)
-    const patient = await dataService.getOrCreatePatient({
-      name: patientName,
-      phone: patientPhone,
-      organizationId: payload.clinicId
-    });
 
-    // 2. Create Appointment
-    const appt = await dataService.createAppointment({
-      clinicId: payload.clinicId,
-      doctorId: doctorId,
-      patientId: patient.id, // Updated: use relational ID
-      date,
-      time,
-      procedure: procedure || 'Agendamento Externo',
-      notes,
-      status: AppointmentStatus.AGENDADO
-    });
-
-    // ✅ AUDITORIA: Log adicional indicando origem N8N (Compliance Check)
-    await this.logN8NAction(dataService, {
-        action: AuditAction.APPOINTMENT_CREATED,
-        entityType: 'appointment',
-        entityId: appt.id,
-        organizationId: payload.clinicId,
-        data: {
-            patientName: patientName,
-            source: 'whatsapp',
-            time: time,
-            date: date
+      case 'UPDATE_STATUS': {
+        if (!data.appointmentId || !data.newStatus) throw new Error('Dados incompletos');
+        const updated = await context.updateAppointmentStatus(data.appointmentId, data.newStatus, AuditSource.N8N_WEBHOOK);
+        
+        // --- NOTIFICATION TRIGGER ---
+        // Notify Secretary if patient cancelled via bot
+        if (data.newStatus === AppointmentStatus.NAO_VEIO || data.newStatus === AppointmentStatus.BLOQUEADO) {
+             await notificationService.notify({
+                title: 'Cancelamento via Bot',
+                message: `O agendamento de ${updated.patient?.name || 'Paciente'} foi alterado para ${data.newStatus} automaticamente.`,
+                type: 'warning',
+                clinicId: payload.clinicId,
+                targetRole: [UserRole.SECRETARY, UserRole.DOCTOR_ADMIN],
+                priority: 'medium',
+                metadata: {
+                    appointmentId: updated.id,
+                    oldStatus: updated.status,
+                    newStatus: data.newStatus
+                }
+            });
         }
-    });
-    
-    return {
-      success: true,
-      message: 'Agendamento criado com sucesso',
-      data: { appointmentId: appt.id, patientId: patient.id }
-    };
-  }
-  
-  private static async handleUpdateStatus(payload: N8NIncomingPayload, dataService: any) {
-    const { appointmentId, newStatus } = payload.data;
-    
-    if (!appointmentId || !newStatus) {
-      return { success: false, message: 'appointmentId e newStatus são obrigatórios' };
+
+        return { success: true, id: updated.id, message: `Status alterado para ${data.newStatus}` };
+      }
+
+      case 'BLOCK_SCHEDULE': {
+        await context.createBatchAppointments([{
+            clinicId: payload.clinicId,
+            doctorId: data.doctorId,
+            date: data.date,
+            time: `${data.startHour} - ${data.endHour}`, // Symbolic
+            status: AppointmentStatus.BLOQUEADO,
+            notes: data.notes || 'Bloqueio via N8N'
+        }], AuditSource.N8N_WEBHOOK);
+
+        return { success: true, message: 'Bloqueio processado' };
+      }
+
+      case 'CREATE_PATIENT_CONTACT': {
+         const patient = await context.getOrCreatePatient({
+             name: data.patientName,
+             phone: data.patientPhone,
+             organizationId: payload.clinicId
+         }, AuditSource.N8N_WEBHOOK);
+
+         // Criar agendamento "EM_CONTATO" (Lead)
+         const lead = await context.createAppointment({
+            clinicId: payload.clinicId,
+            doctorId: data.doctorId, // Pode ser null inicialmente
+            patientId: patient.id,
+            date: new Date().toISOString().split('T')[0], // Hoje
+            time: '00:00', // Placeholder
+            status: AppointmentStatus.EM_CONTATO,
+            procedure: 'Lead WhatsApp',
+            notes: data.message || 'Entrou em contato via WhatsApp'
+         }, AuditSource.N8N_WEBHOOK);
+         
+         // --- NOTIFICATION TRIGGER ---
+         await notificationService.notify({
+            title: 'Novo Lead no WhatsApp',
+            message: `${patient.name} iniciou uma conversa. Verifique o CRM.`,
+            type: 'success',
+            clinicId: payload.clinicId,
+            targetRole: [UserRole.SECRETARY],
+            priority: 'low',
+            actionLink: 'view:Dashboard', // Vai para o CRM
+            metadata: {
+                appointmentId: lead.id,
+                patientName: patient.name
+            }
+         });
+
+         return { success: true, id: patient.id, message: 'Contato criado' };
+      }
+
+      default:
+        throw new Error('Ação desconhecida');
     }
-    
-    console.log(`📝 Atualizando status do agendamento ${appointmentId} para ${newStatus}`);
-    
-    await dataService.updateAppointmentStatus(appointmentId, newStatus as AppointmentStatus);
-    
-    return {
-      success: true,
-      message: 'Status atualizado com sucesso'
-    };
   }
-  
-  private static async handleBlockSchedule(payload: N8NIncomingPayload, dataService: any) {
-    const { date, startHour, endHour } = payload.data;
-    
-    if (!date || !startHour || !endHour) {
-      return { success: false, message: 'date, startHour e endHour são obrigatórios' };
-    }
-    
-    console.log(`🔒 Bloqueando agenda em ${date} de ${startHour} até ${endHour}`);
-    
-    const slotsToBlock: string[] = [];
-    const [startH, startM] = startHour.split(':').map(Number);
-    const [endH, endM] = endHour.split(':').map(Number);
-    let current = new Date(); current.setHours(startH, startM, 0, 0);
-    const end = new Date(); end.setHours(endH, endM, 0, 0);
-
-    while (current < end) {
-      slotsToBlock.push(current.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }));
-      current.setMinutes(current.getMinutes() + 30); // Default interval
-    }
-
-    const doctors = await dataService.getDoctors(payload.clinicId);
-    if(doctors.length === 0) return { success: false, message: 'Nenhum médico encontrado para bloquear agenda.' };
-
-    const newBlockAppointments = slotsToBlock.map((time: string) => ({
-      clinicId: payload.clinicId,
-      doctorId: doctors[0].id,
-      patientId: 'system_block_n8n', // Dummy ID for blocks
-      date: date,
-      time: time,
-      status: AppointmentStatus.BLOQUEADO,
-      notes: 'Bloqueio via Automação'
-    }));
-    
-    await dataService.createBatchAppointments(newBlockAppointments);
-    
-    return {
-      success: true,
-      message: 'Agenda bloqueada com sucesso',
-      data: { blockedSlots: newBlockAppointments.length }
-    };
-  }
-  
-  private static async handleCreateContact(payload: N8NIncomingPayload, dataService: any) {
-    const { patientName, patientPhone, source, message } = payload.data;
-    
-    if (!patientName || !patientPhone) {
-      return { success: false, message: 'patientName e patientPhone são obrigatórios' };
-    }
-    
-    console.log(`👤 Criando contato de ${patientName} via ${source || 'desconhecido'}`);
-    
-    const doctors = await dataService.getDoctors(payload.clinicId);
-    if(doctors.length === 0) return { success: false, message: 'Clínica sem médicos.' };
-
-    // Get or Create Patient
-    const patient = await dataService.getOrCreatePatient({
-        name: patientName,
-        phone: patientPhone,
-        organizationId: payload.clinicId
-    });
-
-    const appt = await dataService.createAppointment({
-      clinicId: payload.clinicId,
-      doctorId: doctors[0].id,
-      patientId: patient.id,
-      date: new Date().toISOString().split('T')[0], // Today
-      time: '00:00', // Placeholder
-      status: AppointmentStatus.EM_CONTATO,
-      procedure: 'Contato Inicial',
-      notes: `Origem: ${source}. Mensagem: ${message || ''}`
-    });
-
-    // ✅ AUDITORIA: Log de contato
-    await this.logN8NAction(dataService, {
-        action: AuditAction.CONTACT_CREATED,
-        entityType: 'contact',
-        entityId: appt.id,
-        organizationId: payload.clinicId,
-        data: {
-            patientName: patientName,
-            source: source,
-            message: message
-        }
-    });
-    
-    return {
-      success: true,
-      message: 'Contato adicionado ao CRM',
-      data: { patientId: patient.id }
-    };
-  }
-}
+};

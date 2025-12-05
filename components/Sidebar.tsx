@@ -1,6 +1,7 @@
 import React from 'react';
 import { User, UserRole, ViewState } from '../types';
 import { LayoutDashboard, Users, Calendar, LogOut, Settings, ClipboardList, BarChart3 } from 'lucide-react';
+import { NotificationCenter } from './NotificationCenter';
 
 interface SidebarProps {
   user: User;
@@ -29,9 +30,14 @@ export const Sidebar: React.FC<SidebarProps> = ({ user, activePage, onNavigate, 
       </div>
 
       <div className="p-4 flex-1">
-        <div className="mb-6 p-3 bg-blue-50 rounded-lg">
-          <p className="text-sm font-semibold text-blue-900">{user.name}</p>
-          <p className="text-xs text-blue-600 capitalize">{user.role.replace('_', ' ')}</p>
+        <div className="mb-6 p-3 bg-blue-50 rounded-lg flex items-center justify-between">
+          <div className="min-w-0 flex-1 mr-2">
+              <p className="text-sm font-semibold text-blue-900 truncate">{user.name}</p>
+              <p className="text-xs text-blue-600 capitalize truncate">{user.role.replace('_', ' ')}</p>
+          </div>
+          <div className="shrink-0">
+             <NotificationCenter user={user} />
+          </div>
         </div>
 
         <nav className="space-y-1">

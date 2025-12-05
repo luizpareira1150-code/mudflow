@@ -1,4 +1,3 @@
-
 import { User, UserRole, Appointment, AppointmentStatus, AgendaConfig, ClinicSettings, Doctor, AvailableSlot, Organization, AccountType, ClientHealthMetrics, GlobalMetrics, Patient, PatientStatus, AuditLog, AuditAction, AuditSource } from '../types';
 import { N8NIntegrationService, N8NOutgoingPayload, generateApiToken } from './n8nIntegration';
 import { passwordService } from './passwordService';
@@ -7,6 +6,7 @@ import { normalizePhone } from '../utils/phoneUtils';
 import { PatientSchema, AppointmentSchema, AppointmentUpdateSchema, IntegrationSettingsSchema } from '../utils/validationSchemas';
 import { validate } from '../utils/validator';
 import { z } from 'zod';
+import { notificationService } from './notificationService';
 
 // Updated interface to use hash instead of plain password
 interface StoredUser extends User {
@@ -1104,7 +1104,25 @@ export const dataService = {
         }
     });
 
-    // 3. Perform Deletion
+    // 3. REAL-TIME NOTIFICATION: If cancellation, notify Doctor
+    if (reason && appt.status !== AppointmentStatus.BLOQUEADO) {
+        await notificationService.notify({
+            title: 'Consulta Cancelada',
+            message: `Paciente ${patient?.name} cancelou para ${appt.date}. Motivo: ${reason}`,
+            type: 'warning',
+            clinicId: appt.clinicId,
+            targetRole: [UserRole.DOCTOR_ADMIN], // Notify Doctor
+            priority: 'medium',
+            actionLink: 'view:Agenda',
+            metadata: {
+                appointmentId: appt.id,
+                reason,
+                patientName: patient?.name
+            }
+        });
+    }
+
+    // 4. Perform Deletion
     const filtered = appts.filter(a => a.id !== id);
     setStorage(APPOINTMENTS_KEY, filtered);
   },
