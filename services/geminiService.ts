@@ -1,22 +1,47 @@
+
 import { GoogleGenAI } from "@google/genai";
 import { Patient, Appointment } from '../types';
 
 const apiKey = process.env.API_KEY || '';
-const ai = new GoogleGenAI({ apiKey });
+const ai = apiKey ? new GoogleGenAI({ apiKey }) : null;
 
-export const generateSmartSummary = async (patient: Patient): Promise<string> => {
-  if (!apiKey) return "API Key not configured. Please add GEMINI_API_KEY to your environment.";
+export const generateSmartSummary = async (patient: Patient, appointments: Appointment[]): Promise<string> => {
+  if (!ai) {
+    const total = appointments.length;
+    const attended = appointments.filter(a => a.status === 'ATENDIDO').length;
+    const noShow = appointments.filter(a => a.status === 'NAO_VEIO').length;
+    
+    return `📋 **Perfil Operacional do Paciente**
+
+• **Histórico:** ${attended} presenças / ${noShow} faltas.
+• **Taxa de Comparecimento:** ${(total > 0 ? (attended/total * 100) : 0).toFixed(0)}%
+
+💡 **Nota:** Dados insuficientes para gerar um perfil comportamental completo. Continue agendando para alimentar a IA.`;
+  }
 
   try {
+    const total = appointments.length;
+    const attended = appointments.filter(a => a.status === 'ATENDIDO').length;
+    const noShow = appointments.filter(a => a.status === 'NAO_VEIO').length;
+    const cancelled = appointments.filter(a => a.status === 'BLOQUEADO' || a.status === 'NAO_VEIO').length; 
+
     const prompt = `
-      Act as a medical assistant. Generate a brief, professional 2-sentence clinical summary for a dashboard view for the following patient.
-      Highlight their condition and the immediate next step.
+      Atue como um Gerente de Agenda de Clínica rigoroso e eficiente. Gere um resumo logístico conciso para este paciente com base APENAS nas estatísticas de histórico.
       
-      Patient Name: ${patient.name}
-      Condition: ${patient.condition}
-      Status: ${patient.status}
-      Birth Date: ${patient.birthDate || 'N/A'}
-      Next Step: ${patient.nextStep}
+      REGRAS OBRIGATÓRIAS:
+      1. Responda estritamente em PORTUGUÊS DO BRASIL (PT-BR).
+      2. Foque APENAS em: Confiabilidade de comparecimento (Probabilidade de falta/No-show) e dias/horários preferidos.
+      3. NÃO analise sentimentos, humor ou personalidade.
+      4. NÃO mencione condições médicas ou diagnósticos.
+      5. Seja objetivo, direto e use formatação com bullet points para facilitar a leitura rápida.
+      
+      Dados do Paciente:
+      Nome: ${patient.name}
+      Total de Agendamentos: ${total}
+      Comparecimentos: ${attended}
+      Faltas (No-Shows): ${noShow}
+      Cancelamentos: ${cancelled}
+      Usuário desde: ${patient.createdAt}
     `;
 
     const response = await ai.models.generateContent({
@@ -24,51 +49,30 @@ export const generateSmartSummary = async (patient: Patient): Promise<string> =>
       contents: prompt,
     });
 
-    return response.text || "No summary available.";
+    return response.text || "Resumo indisponível no momento.";
   } catch (error) {
     console.error("Gemini API Error:", error);
-    return "Unable to generate summary at this time.";
+    return "Não foi possível gerar o resumo operacional.";
   }
 };
 
 export const generateWebhookPayload = async (event: string, contextData: any): Promise<any> => {
-  if (!apiKey) {
-    // Fallback if no API key
+  if (!ai) {
     return {
       event,
       timestamp: new Date().toISOString(),
       data: contextData,
       mock: true,
-      clinicId: 'ORG001'
+      clinicId: 'ORG001',
+      note: "Gerado via fallback seguro (Sem API Key)"
     };
   }
 
   try {
     const prompt = `
-      Generate a realistic JSON webhook payload for a medical CRM system integrating with N8N (Evolution API context).
-      The structure should mimic the following interface:
-      
-      interface N8NWebhookPayload {
-        event: string;
-        data: {
-            appointmentId?: string;
-            doctorName?: string;
-            patientName?: string;
-            patientPhone?: string;
-            reason?: string; 
-            notes?: string;
-            oldStatus?: string;
-            newStatus?: string;
-            date?: string;
-            time?: string;
-        };
-        timestamp: string;
-        clinicId: string; 
-      }
-
+      Generate a realistic JSON webhook payload for a medical CRM system integrating with N8N.
       Event Type Requested: ${event}
       Context Data provided: ${JSON.stringify(contextData)}
-      
       Return ONLY the JSON.
     `;
 
@@ -98,14 +102,22 @@ export const generateWebhookPayload = async (event: string, contextData: any): P
 };
 
 export const analyzeRecoveryTrend = async (appointments: Appointment[]): Promise<string> => {
-    if (!apiKey) return "AI analysis requires API Key.";
+    if (!ai) {
+        return `📊 **Aguardando Dados**
+
+O sistema precisa de mais agendamentos reais para gerar insights operacionais válidos.
+
+💡 **Dica:** Configure seus horários e comece a agendar pacientes para desbloquear a análise de gargalos e sugestões de otimização.`;
+    }
 
     try {
         const prompt = `
-            Analyze these recent clinic appointments and suggest a general operational improvement for the clinic managers in one short paragraph.
-            Focus on status trends (e.g., high cancellation rates (NAO_VEIO), bottlenecks in 'EM_CONTATO').
+            Analise estes agendamentos recentes da clínica e sugira uma melhoria operacional geral para os gestores em um parágrafo curto.
+            Foque em eficiência de agenda, horários de pico e taxas de cancelamento.
+            NÃO mencione tratamentos médicos ou diagnósticos.
+            Responda em Português do Brasil.
             
-            Appointments Data: ${JSON.stringify(appointments, (key, value) => {
+            Dados de Agendamentos: ${JSON.stringify(appointments, (key, value) => {
                 if (key === 'patientId' || key === 'clinicId') return undefined; // Remove IDs to save tokens
                 return value;
             })}
@@ -114,10 +126,10 @@ export const analyzeRecoveryTrend = async (appointments: Appointment[]): Promise
             model: 'gemini-2.5-flash',
             contents: prompt,
         });
-        return response.text || "No analysis generated.";
+        return response.text || "Análise não gerada.";
 
     } catch (e) {
         console.error(e);
-        return "Analysis unavailable.";
+        return "Análise indisponível.";
     }
 }

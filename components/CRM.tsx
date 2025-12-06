@@ -1,4 +1,3 @@
-
 import React, { useEffect, useState } from 'react';
 import { Appointment, AppointmentStatus, User, Column, Doctor } from '../types';
 import { dataService } from '../services/mockSupabase';
@@ -6,6 +5,7 @@ import { Phone, User as UserIcon, Edit2, X, Save, Trash2, Calendar as CalendarIc
 import { DatePicker } from './DatePicker';
 import { useToast } from './ToastProvider';
 import { useRealtimeAppointments } from '../hooks/useRealtimeData';
+import { RealtimeIndicator } from './RealtimeIndicator';
 
 interface CRMProps {
   user: User;
@@ -26,14 +26,16 @@ const COLUMNS: Column[] = [
 export const CRM: React.FC<CRMProps> = ({ user, doctors, selectedDoctorId, onDoctorChange, isConsultorio }) => {
   const { showToast } = useToast();
   const [selectedDate, setSelectedDate] = useState<string>(new Date().toISOString().split('T')[0]);
-  const [draggedApptId, setDraggedApptId] = useState<string | null>(null);
-
+  
   // ✅ REALTIME HOOK: Substitui polling manual
-  const { data: appointments, loading, setData: setAppointments } = useRealtimeAppointments(
+  // O hook gerencia fetching inicial e updates via WebSocket
+  const { data: appointments, loading, setData: setAppointments, error, refresh } = useRealtimeAppointments(
     user.clinicId, 
     selectedDate, 
     selectedDoctorId
   );
+
+  const [draggedApptId, setDraggedApptId] = useState<string | null>(null);
 
   // Modal State
   const [isDetailsModalOpen, setIsDetailsModalOpen] = useState(false);
@@ -77,14 +79,13 @@ export const CRM: React.FC<CRMProps> = ({ user, doctors, selectedDoctorId, onDoc
     const previousAppt = { ...appt };
 
     try {
-        // 2. Atualização Otimista: Atualiza a UI imediatamente
+        // 2. Atualização Otimista: Atualiza a UI imediatamente (Local)
         setAppointments(prev => (prev || []).map(a => 
             a.id === draggedApptId ? { ...a, status: targetStatus } : a
         ));
 
         // 3. Chamada ao Servidor (Background)
-        // Note: The service will emit a websocket event which will re-trigger the hook.
-        // But since we updated optimistically, the UI feels instant.
+        // O serviço emite evento WebSocket que atualizará outras abas
         await dataService.updateAppointmentStatus(draggedApptId, targetStatus);
         
         showToast('success', `Movido para ${targetStatus.replace(/_/g, ' ')}`);
@@ -123,6 +124,7 @@ export const CRM: React.FC<CRMProps> = ({ user, doctors, selectedDoctorId, onDoc
         procedure: editProcedure,
         notes: editNotes
       });
+      // WebSocket atualizará a UI automaticamente
       setIsDetailsModalOpen(false);
       showToast('success', 'Alterações salvas!');
     } catch (error: any) {
@@ -141,6 +143,7 @@ export const CRM: React.FC<CRMProps> = ({ user, doctors, selectedDoctorId, onDoc
 
       try {
           await dataService.deleteAppointment(selectedAppointment.id, cancellationReason);
+          // WebSocket atualizará a UI automaticamente
           setIsCancelModalOpen(false);
           setIsDetailsModalOpen(false);
           showToast('success', 'Agendamento cancelado.');
@@ -172,11 +175,13 @@ export const CRM: React.FC<CRMProps> = ({ user, doctors, selectedDoctorId, onDoc
         <div>
           <h2 className="text-2xl font-bold text-gray-800">Gestão de Pacientes (CRM)</h2>
           <p className="text-sm text-gray-500">
-            Acompanhe o fluxo de atendimento desde o contato inicial até o pós-consulta.
+            Arraste os cards para mudar o status • Atualização em tempo real
           </p>
         </div>
         
         <div className="flex items-center gap-3">
+            <RealtimeIndicator />
+            
             {!isConsultorio ? (
                 <div className="relative">
                     <UserIcon size={16} className="absolute left-2.5 top-2.5 text-gray-400" />
@@ -205,83 +210,97 @@ export const CRM: React.FC<CRMProps> = ({ user, doctors, selectedDoctorId, onDoc
       </div>
 
       <div className="flex-1 overflow-x-auto overflow-y-hidden pb-4">
-        <div className="flex gap-4 h-full min-w-[1200px]">
-          {COLUMNS.map(column => (
-            <div 
-                key={column.id} 
-                className="flex-1 flex flex-col rounded-xl border bg-gray-100/50 border-gray-200"
-                onDragOver={handleDragOver}
-                onDrop={(e) => handleDrop(e, column.id)}
-            >
-              <div className={`p-4 border-b border-gray-200 rounded-t-xl ${column.color.replace('bg-', 'bg-opacity-50 ')}`}>
-                <div className="flex justify-between items-center">
-                    <h3 className="font-bold text-sm uppercase tracking-wide text-gray-700">
-                        {column.title}
-                    </h3>
-                    <span className="bg-white/50 text-gray-600 text-xs font-bold px-2 py-1 rounded-full">
-                        {appointmentList.filter(a => a.status === column.id).length}
-                    </span>
+        {loading ? (
+            <div className="flex items-center justify-center h-64">
+                <div className="flex flex-col items-center gap-3">
+                    <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+                    <p className="text-gray-400 text-sm">Sincronizando...</p>
                 </div>
-              </div>
+            </div>
+        ) : error ? (
+            <div className="flex items-center justify-center h-64">
+                <div className="text-center">
+                    <AlertTriangle size={48} className="mx-auto text-red-300 mb-4" />
+                    <p className="text-red-600">Erro ao carregar dados</p>
+                    <button onClick={refresh} className="mt-4 text-blue-600 hover:underline">
+                        Tentar novamente
+                    </button>
+                </div>
+            </div>
+        ) : (
+            <div className="flex gap-4 h-full min-w-[1200px]">
+            {COLUMNS.map(column => (
+                <div 
+                    key={column.id} 
+                    className="flex-1 flex flex-col rounded-xl border bg-gray-100/50 border-gray-200"
+                    onDragOver={handleDragOver}
+                    onDrop={(e) => handleDrop(e, column.id)}
+                >
+                <div className={`p-4 border-b border-gray-200 rounded-t-xl ${column.color.replace('bg-', 'bg-opacity-50 ')}`}>
+                    <div className="flex justify-between items-center">
+                        <h3 className="font-bold text-sm uppercase tracking-wide text-gray-700">
+                            {column.title}
+                        </h3>
+                        <span className="bg-white/50 text-gray-600 text-xs font-bold px-2 py-1 rounded-full">
+                            {appointmentList.filter(a => a.status === column.id).length}
+                        </span>
+                    </div>
+                </div>
 
-              <div className="p-3 flex-1 overflow-y-auto space-y-3 custom-scrollbar">
-                {loading ? (
-                    <div className="text-center text-gray-400 text-sm mt-10">
-                        <div className="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-2" />
-                        Carregando...
-                    </div>
-                ) : appointmentList.filter(a => a.status === column.id).length === 0 ? (
-                    <div className="text-center text-gray-300 text-sm mt-10 italic">
-                        {column.id === AppointmentStatus.ATENDIMENTO_HUMANO 
-                            ? 'Nenhum paciente aguardando'
-                            : 'Vazio'}
-                    </div>
-                ) : (
-                    appointmentList
-                        .filter(a => a.status === column.id)
-                        .map(appt => (
-                            <div
-                                key={appt.id}
-                                draggable
-                                onDragStart={(e) => handleDragStart(e, appt.id)}
-                                onClick={() => openDetails(appt)}
-                                className="bg-white p-4 rounded-lg shadow-sm border border-gray-100 cursor-move transition-all group active:scale-95 active:shadow-lg hover:shadow-md"
-                            >
-                                <div className="flex justify-between items-start mb-2">
-                                    <span className="font-bold text-gray-800">{appt.time}</span>
-                                    {appt.procedure && column.id !== AppointmentStatus.ATENDIMENTO_HUMANO && (
-                                        <span className="text-[10px] bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded border border-gray-200 truncate max-w-[100px]">
-                                            {appt.procedure}
-                                        </span>
+                <div className="p-3 flex-1 overflow-y-auto space-y-3 custom-scrollbar">
+                    {appointmentList.filter(a => a.status === column.id).length === 0 ? (
+                        <div className="text-center text-gray-300 text-sm mt-10 italic">
+                            {column.id === AppointmentStatus.ATENDIMENTO_HUMANO 
+                                ? 'Nenhum paciente aguardando'
+                                : 'Vazio'}
+                        </div>
+                    ) : (
+                        appointmentList
+                            .filter(a => a.status === column.id)
+                            .map(appt => (
+                                <div
+                                    key={appt.id}
+                                    draggable
+                                    onDragStart={(e) => handleDragStart(e, appt.id)}
+                                    onClick={() => openDetails(appt)}
+                                    className="bg-white p-4 rounded-lg shadow-sm border border-gray-100 cursor-move transition-all group active:scale-95 active:shadow-lg hover:shadow-md"
+                                >
+                                    <div className="flex justify-between items-start mb-2">
+                                        <span className="font-bold text-gray-800">{appt.time}</span>
+                                        {appt.procedure && column.id !== AppointmentStatus.ATENDIMENTO_HUMANO && (
+                                            <span className="text-[10px] bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded border border-gray-200 truncate max-w-[100px]">
+                                                {appt.procedure}
+                                            </span>
+                                        )}
+                                    </div>
+                                    <div className="flex items-center gap-2 mb-1">
+                                        <UserIcon size={14} className="text-gray-400" />
+                                        <p className="font-medium text-gray-900 text-sm truncate">{appt.patient?.name || 'Paciente'}</p>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                        <Phone size={14} className="text-gray-400" />
+                                        <p className="text-xs text-gray-500">{appt.patient?.phone}</p>
+                                    </div>
+                                    {appt.notes && (
+                                        <div className="mt-2 pt-2 border-t border-gray-50 text-[11px] text-gray-400 italic truncate">
+                                            "{appt.notes}"
+                                        </div>
+                                    )}
+                                    
+                                    {column.id === AppointmentStatus.ATENDIMENTO_HUMANO && (
+                                        <button className="mt-3 w-full py-1.5 bg-green-600 text-white text-xs font-bold rounded hover:bg-green-700 transition-colors flex items-center justify-center gap-1 shadow-sm">
+                                            <MessageSquare size={12} />
+                                            Assumir no WhatsApp
+                                        </button>
                                     )}
                                 </div>
-                                <div className="flex items-center gap-2 mb-1">
-                                    <UserIcon size={14} className="text-gray-400" />
-                                    <p className="font-medium text-gray-900 text-sm truncate">{appt.patient?.name || 'Paciente'}</p>
-                                </div>
-                                <div className="flex items-center gap-2">
-                                    <Phone size={14} className="text-gray-400" />
-                                    <p className="text-xs text-gray-500">{appt.patient?.phone}</p>
-                                </div>
-                                {appt.notes && (
-                                    <div className="mt-2 pt-2 border-t border-gray-50 text-[11px] text-gray-400 italic truncate">
-                                        "{appt.notes}"
-                                    </div>
-                                )}
-                                
-                                {column.id === AppointmentStatus.ATENDIMENTO_HUMANO && (
-                                    <button className="mt-3 w-full py-1.5 bg-green-600 text-white text-xs font-bold rounded hover:bg-green-700 transition-colors flex items-center justify-center gap-1 shadow-sm">
-                                        <MessageSquare size={12} />
-                                        Assumir no WhatsApp
-                                    </button>
-                                )}
-                            </div>
-                        ))
-                )}
-              </div>
+                            ))
+                    )}
+                </div>
+                </div>
+            ))}
             </div>
-          ))}
-        </div>
+        )}
       </div>
 
       {/* Details Modal */}

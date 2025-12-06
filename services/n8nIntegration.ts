@@ -229,20 +229,33 @@ class N8NIntegrationServiceClass {
 
         switch (action) {
           case 'GET_SLOT_SUGGESTIONS': {
-            // TypeScript knows 'data' has 'patientPhone' and 'doctorId'
+            // 1. Encontrar paciente pelo telefone (vindo do WhatsApp)
             const patients = await context.searchPatients(data.patientPhone, clinicId);
             const patient = patients[0]; 
-            if (!patient) return { success: false, message: 'Paciente não encontrado.', suggestions: [] };
+            
+            // Se paciente não existe, não há histórico para analisar
+            if (!patient) {
+                return { 
+                    success: false, 
+                    message: 'Paciente não encontrado para gerar histórico.', 
+                    suggestions: [] 
+                };
+            }
 
+            // 2. Chamar o motor de recomendação
+            // O context.dataService inclui o recommendationService (ou importamos direto se mock)
+            // Aqui usamos recommendationService importado diretamente para garantir acesso
             const suggestions = await recommendationService.suggestOptimalSlots(clinicId, data.doctorId, patient.id);
+            
             return {
                 success: true,
                 patientName: patient.name,
+                // Mapeamos para um formato simples que o ChatGPT entenda fácil
                 suggestions: suggestions.map((s: any) => ({
-                    date: s.slot.date,
-                    time: s.slot.time,
-                    score: s.score,
-                    reason: s.reason 
+                    date: s.slot.date, // "2023-10-05"
+                    time: s.slot.time, // "09:00"
+                    score: s.score,    // 50 (ChatGPT pode usar para priorizar)
+                    reason: s.reason   // "Costuma vir às terças"
                 }))
             };
           }

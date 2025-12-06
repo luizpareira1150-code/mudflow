@@ -20,21 +20,8 @@ export const STORAGE_KEYS = {
 
 export const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
-export const getStorage = <T>(key: string, initial: T): T => {
-  const stored = localStorage.getItem(key);
-  if (!stored) {
-    localStorage.setItem(key, JSON.stringify(initial));
-    return initial;
-  }
-  return JSON.parse(stored);
-};
-
-export const setStorage = <T>(key: string, data: T) => {
-  localStorage.setItem(key, JSON.stringify(data));
-};
-
 // ==========================================
-// INITIAL MOCK DATA (SEED)
+// INITIAL MOCK DATA (SEED - BASIC)
 // ==========================================
 
 export const ORG_CLINICA_ID = 'org_clinica_001';
@@ -86,26 +73,17 @@ export const initialAvailability: DoctorAvailability[] = [
     doctorId: 'doc_cli_1',
     organizationId: ORG_CLINICA_ID,
     weekSchedule: {
-      [DayOfWeek.MONDAY]: { enabled: true, startTime: '08:00', endTime: '12:00', intervalMinutes: 30 },
-      [DayOfWeek.WEDNESDAY]: { enabled: true, startTime: '13:00', endTime: '19:00', intervalMinutes: 30 },
-      [DayOfWeek.FRIDAY]: { enabled: true, startTime: '08:00', endTime: '16:00', intervalMinutes: 30 },
+      [DayOfWeek.MONDAY]: { enabled: true, startTime: '08:00', endTime: '18:00', intervalMinutes: 30 },
+      [DayOfWeek.TUESDAY]: { enabled: true, startTime: '08:00', endTime: '18:00', intervalMinutes: 30 },
+      [DayOfWeek.WEDNESDAY]: { enabled: true, startTime: '08:00', endTime: '18:00', intervalMinutes: 30 },
+      [DayOfWeek.THURSDAY]: { enabled: true, startTime: '08:00', endTime: '18:00', intervalMinutes: 30 },
+      [DayOfWeek.FRIDAY]: { enabled: true, startTime: '08:00', endTime: '17:00', intervalMinutes: 30 }, // Ends early
     },
     absences: [],
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString()
   },
-  {
-    id: 'avail_2',
-    doctorId: 'doc_cli_2',
-    organizationId: ORG_CLINICA_ID,
-    weekSchedule: {
-      [DayOfWeek.TUESDAY]: { enabled: true, startTime: '09:00', endTime: '18:00', intervalMinutes: 45 },
-      [DayOfWeek.THURSDAY]: { enabled: true, startTime: '09:00', endTime: '18:00', intervalMinutes: 45 },
-    },
-    absences: [],
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString()
-  }
+  // ... other availabilities
 ];
 
 export const initialSettings: ClinicSettings[] = [
@@ -128,11 +106,37 @@ export const initialSettings: ClinicSettings[] = [
   }
 ];
 
-// DADOS DE PACIENTES VAZIOS PARA INÍCIO LIMPO
-export const initialPatients: Patient[] = [];
+// Clean Initial Data
+export const initialPatients: Patient[] = [
+    {
+        id: 'p_ex_1',
+        organizationId: ORG_CLINICA_ID,
+        name: 'Paciente Exemplo',
+        phone: '11999999999',
+        status: PatientStatus.Active,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+    }
+];
 
-// DADOS DE AGENDAMENTOS VAZIOS PARA INÍCIO LIMPO
 export const initialAppointments: Appointment[] = [];
-
-// LOGS VAZIOS PARA INÍCIO LIMPO
 export const initialLogs: AuditLog[] = [];
+
+// ==========================================
+// STORAGE HELPERS
+// ==========================================
+
+export const getStorage = <T>(key: string, initial: T): T => {
+  const stored = localStorage.getItem(key);
+  
+  if (!stored) {
+    localStorage.setItem(key, JSON.stringify(initial));
+    return initial;
+  }
+
+  return JSON.parse(stored);
+};
+
+export const setStorage = <T>(key: string, data: T) => {
+  localStorage.setItem(key, JSON.stringify(data));
+};

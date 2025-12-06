@@ -1,8 +1,7 @@
-
 import React, { useState, useEffect } from 'react';
-import { Appointment, AppointmentStatus, User, AgendaConfig, Doctor, AvailableSlot, DoctorAvailability, DayOfWeek, DoctorAbsence } from '../types';
-import { dataService, authService, settingsService, doctorAvailabilityService } from '../services/mockSupabase';
-import { Clock, Plus, AlertCircle, CheckCircle, Settings, X, Save, Lock, CalendarOff, Trash2, User as UserIcon, Phone, Calendar as CalendarIcon, Edit2, FileText, Stethoscope, Tag, ChevronDown, AlertTriangle, Briefcase, Plane, Sun } from 'lucide-react';
+import { Appointment, AppointmentStatus, User, AgendaConfig, Doctor, AvailableSlot } from '../types';
+import { dataService, doctorAvailabilityService } from '../services/mockSupabase';
+import { Clock, Plus, AlertCircle, CheckCircle, Settings, X, Save, Lock, CalendarOff, Trash2, User as UserIcon, Phone, Calendar as CalendarIcon, Edit2, FileText, Stethoscope, Tag, ChevronDown, AlertTriangle } from 'lucide-react';
 import { DatePicker } from './DatePicker';
 import { BookingModal } from './BookingModal';
 import { useToast } from './ToastProvider';
@@ -10,6 +9,7 @@ import { slotReservationService } from '../services/slotReservationService';
 import { DoctorAvailabilityConfig } from './DoctorAvailabilityConfig';
 import { useRealtimeData } from '../hooks/useRealtimeData';
 import { SocketEvent } from '../lib/socketServer';
+import { RealtimeIndicator } from './RealtimeIndicator';
 
 interface AgendaProps {
   user: User;
@@ -40,7 +40,7 @@ export const Agenda: React.FC<AgendaProps> = ({
   
   // ✅ REALTIME HOOK: Substitui polling manual para Available Slots
   // Ouve eventos de criação/edição/exclusão de agendamentos e alterações de config
-  const { data: availableSlots, loading, refresh: refreshSlots } = useRealtimeData<AvailableSlot[]>(
+  const { data: availableSlots, loading, refresh: refreshSlots, error } = useRealtimeData<AvailableSlot[]>(
     () => {
         if (!selectedDoctorId) return Promise.resolve([]);
         return dataService.getAvailableSlots(user.clinicId, selectedDoctorId, selectedDate);
@@ -160,7 +160,7 @@ export const Agenda: React.FC<AgendaProps> = ({
 
   const handleBookingSuccess = () => {
       setIsModalOpen(false);
-      refreshSlots();
+      // Não precisa chamar refreshSlots() - WebSocket e o hook cuidam disso
   };
 
   const handleDeleteAppointment = async () => {
@@ -176,7 +176,7 @@ export const Agenda: React.FC<AgendaProps> = ({
         await dataService.deleteAppointment(selectedAppointment.id, cancellationReason);
         setIsCancelModalOpen(false);
         setIsDetailsModalOpen(false);
-        refreshSlots(); // Optimistic update handled by hook, but explicit refresh ensures
+        // WebSocket atualizará a UI
         if (selectedAppointment.status === AppointmentStatus.BLOQUEADO) {
             showToast('success', 'Horário liberado.');
         } else {
@@ -200,7 +200,7 @@ export const Agenda: React.FC<AgendaProps> = ({
         notes: editNotes
       });
       setIsDetailsModalOpen(false);
-      refreshSlots();
+      // WebSocket atualizará a UI
       showToast('success', 'Consulta remarcada com sucesso!');
     } catch (error: any) {
       showToast('error', error.message || 'Erro ao atualizar.');
@@ -263,6 +263,7 @@ export const Agenda: React.FC<AgendaProps> = ({
         </div>
         
         <div className="flex items-center gap-3">
+          <RealtimeIndicator />
           <div className="w-40">
             <DatePicker value={selectedDate} onChange={setSelectedDate} />
           </div>
@@ -314,7 +315,19 @@ export const Agenda: React.FC<AgendaProps> = ({
              </div>
         )}
 
-        {slotsToRender.length === 0 && !loading ? (
+        {error && (
+          <div className="flex items-center justify-center h-64">
+            <div className="text-center">
+              <AlertCircle size={48} className="mx-auto text-red-300 mb-4" />
+              <p className="text-red-600">Erro ao carregar horários</p>
+              <button onClick={refreshSlots} className="mt-4 text-blue-600 hover:underline">
+                Tentar novamente
+              </button>
+            </div>
+          </div>
+        )}
+
+        {slotsToRender.length === 0 && !loading && !error ? (
            <div className="h-full flex flex-col items-center justify-center text-gray-400">
              <AlertCircle size={48} className="mb-4 text-gray-300" />
              <p>Nenhum horário disponível para esta data.</p>

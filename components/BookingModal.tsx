@@ -1,11 +1,11 @@
-
 import React, { useState, useEffect } from 'react';
-import { User, Patient, RecommendedSlot } from '../types';
+import { User, Patient, RecommendedSlot, AppointmentStatus } from '../types';
 import { dataService } from '../services/mockSupabase'; // Kept only for initial doctor load if needed, but hook handles it
 import { DatePicker } from './DatePicker';
 import { PatientSelector } from './PatientSelector';
 import { useAppointmentBooking } from '../hooks/useAppointmentBooking';
 import { X, Check, AlertCircle, ChevronDown, Tag, Sparkles, ArrowRight } from 'lucide-react';
+import { useToast } from './ToastProvider';
 
 interface BookingModalProps {
   isOpen: boolean;
@@ -26,6 +26,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
   preSelectedTime,
   preSelectedDoctorId
 }) => {
+  const { showToast } = useToast();
   // UI Form State (Controlled Inputs)
   const [selectedDoctorId, setSelectedDoctorId] = useState<string>('');
   const [date, setDate] = useState<string>('');
@@ -33,8 +34,12 @@ export const BookingModal: React.FC<BookingModalProps> = ({
   const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null);
   const [procedure, setProcedure] = useState('');
   const [notes, setNotes] = useState('');
+  
+  // Local submission state since we are overriding the hook's bookAppointment for custom logic
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState('');
 
-  // Business Logic Hook
+  // Business Logic Hook (for fetching data)
   const {
     doctors,
     slots,
@@ -42,11 +47,8 @@ export const BookingModal: React.FC<BookingModalProps> = ({
     suggestions,
     loadingData,
     loadingSuggestions,
-    isSubmitting,
-    error,
     fetchSuggestions,
-    clearSuggestions,
-    bookAppointment
+    clearSuggestions
   } = useAppointmentBooking({
     clinicId: user.clinicId,
     selectedDoctorId,
@@ -56,12 +58,8 @@ export const BookingModal: React.FC<BookingModalProps> = ({
   // Initialization Effect
   useEffect(() => {
     if (isOpen) {
-      // Set initial values based on props or defaults
       if (preSelectedDoctorId) {
           setSelectedDoctorId(preSelectedDoctorId);
-      } else {
-          // If pure open, wait for doctors to load then set first? 
-          // The hook loads doctors. We can listen to doctors change.
       }
       
       setDate(preSelectedDate || new Date().toISOString().split('T')[0]);
@@ -69,6 +67,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
       setSelectedPatient(null);
       setProcedure('');
       setNotes('');
+      setSubmitError('');
       clearSuggestions();
     }
   }, [isOpen, preSelectedDate, preSelectedTime, preSelectedDoctorId, clearSuggestions]);
@@ -89,17 +88,39 @@ export const BookingModal: React.FC<BookingModalProps> = ({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const success = await bookAppointment({
-      patient: selectedPatient,
-      time: selectedTime,
-      procedure,
-      notes,
-      currentUser: user
-    });
+    if (!selectedPatient) {
+        showToast('error', 'Selecione um paciente');
+        return;
+    }
 
-    if (success) {
-      onSuccess();
+    setIsSubmitting(true);
+    setSubmitError('');
+    
+    try {
+      // Direct call to dataService to leverage WebSocket emission
+      await dataService.createAppointment({
+        patientId: selectedPatient.id,
+        doctorId: selectedDoctorId,
+        clinicId: user.clinicId,
+        date: date,
+        time: selectedTime,
+        status: AppointmentStatus.AGENDADO,
+        procedure: procedure || 'Consulta',
+        notes: notes,
+        createdAt: new Date().toISOString()
+      });
+      // WebSocket event emitted by dataService will trigger refresh in parent components automatically
+
+      showToast('success', 'Agendamento criado! Paciente será notificado.');
+      onSuccess(); // Close modal logic
       onClose();
+      
+    } catch (error: any) {
+      const msg = error.message || 'Erro ao criar agendamento';
+      setSubmitError(msg);
+      showToast('error', msg);
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -283,10 +304,10 @@ export const BookingModal: React.FC<BookingModalProps> = ({
             </div>
           </div>
 
-          {error && (
+          {submitError && (
             <div className="flex items-center gap-2 p-3 bg-red-50 text-red-600 rounded-lg text-sm animate-pulse border border-red-100">
                 <AlertCircle size={16} />
-                {error}
+                {submitError}
             </div>
           )}
         </form>

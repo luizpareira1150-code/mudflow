@@ -128,6 +128,7 @@ const CreateContactData = z.object({
   })
 });
 
+// ✅ NOVO SCHEMA PARA SUGGESTIONS
 const GetSuggestionsData = z.object({
   action: z.literal('GET_SLOT_SUGGESTIONS'),
   data: z.object({
@@ -152,7 +153,7 @@ export const N8NWebhookSchema = WebhookBase.and(
     UpdateStatusData,
     BlockScheduleData,
     CreateContactData,
-    GetSuggestionsData,
+    GetSuggestionsData, // Adicionado aqui
     HumanHandoverData
   ])
 );

@@ -1,6 +1,3 @@
-
-
-
 import { Appointment, AppointmentStatus, AvailableSlot, AuditAction, AuditSource, UserRole, DayOfWeek } from '../types';
 import { STORAGE_KEYS, getStorage, setStorage, delay, initialAppointments } from './storage';
 import { systemLogService } from './auditService';
@@ -457,27 +454,5 @@ export const appointmentService = {
         appointments[0].clinicId,
         getCurrentUserId()
       );
-  },
-  
-  subscribeToAppointments: (clinicId: string, date: string, doctorId: string, callback: (data: Appointment[]) => void) => {
-      const fetch = async () => {
-          const data = await appointmentService.getAppointments(clinicId, date, doctorId);
-          callback(data);
-      };
-      
-      // ✅ NEW: USE WEBSOCKET INSTEAD OF INTERVAL
-      fetch(); // Initial fetch
-      
-      const unsubscribe = socketServer.on(SocketEvent.APPOINTMENT_CREATED, fetch);
-      const unsubscribe2 = socketServer.on(SocketEvent.APPOINTMENT_UPDATED, fetch);
-      const unsubscribe3 = socketServer.on(SocketEvent.APPOINTMENT_DELETED, fetch);
-      const unsubscribe4 = socketServer.on(SocketEvent.APPOINTMENT_STATUS_CHANGED, fetch);
-
-      return () => {
-          unsubscribe();
-          unsubscribe2();
-          unsubscribe3();
-          unsubscribe4();
-      };
   }
 };
