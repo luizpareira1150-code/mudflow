@@ -1,4 +1,5 @@
 
+
 export enum AccountType {
   CONSULTORIO = 'CONSULTORIO',
   CLINICA = 'CLINICA'
@@ -28,6 +29,7 @@ export enum PatientStatus {
 export enum AppointmentStatus {
   EM_CONTATO = 'EM_CONTATO',
   AGENDADO = 'AGENDADO',
+  ATENDIMENTO_HUMANO = 'ATENDIMENTO_HUMANO',
   ATENDIDO = 'ATENDIDO',
   NAO_VEIO = 'NAO_VEIO',
   BLOQUEADO = 'BLOQUEADO'
@@ -42,6 +44,45 @@ export enum DayOfWeek {
   FRIDAY = 5,
   SATURDAY = 6
 }
+
+// --- NEW AGENDA RELEASE TYPES ---
+export enum AgendaReleaseType {
+  ALWAYS_OPEN = 'ALWAYS_OPEN',
+  WEEKLY_RELEASE = 'WEEKLY_RELEASE',
+  MONTHLY_RELEASE = 'MONTHLY_RELEASE',
+  CUSTOM_DATE = 'CUSTOM_DATE'
+}
+
+export interface AgendaReleaseSchedule {
+  id: string;
+  doctorId: string;
+  organizationId: string;
+  releaseType: AgendaReleaseType;
+  
+  weeklyConfig?: {
+    dayOfWeek: DayOfWeek;
+    hour: string;
+    advanceDays: number;
+  };
+  
+  monthlyConfig?: {
+    releaseDay: number;
+    fallbackToWeekday: boolean;
+    hour: string;
+    targetMonthOffset: number;
+  };
+  
+  customDates?: {
+    releaseDate: string;
+    targetStartDate: string;
+    targetEndDate: string;
+  }[];
+  
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+// --------------------------------
 
 export enum AuditAction {
   USER_LOGIN = 'USER_LOGIN',
@@ -76,6 +117,7 @@ export interface Organization {
   accountType: AccountType;
   ownerUserId: string;
   maxDoctors: number;
+  subscriptionValue?: number; // Valor mensal cobrado (MRR)
 }
 
 export interface User {
@@ -94,6 +136,7 @@ export interface Doctor {
   organizationId: string;
   name: string;
   specialty: string;
+  crm?: string;
   color: string;
 }
 

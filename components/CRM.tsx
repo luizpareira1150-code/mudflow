@@ -2,9 +2,10 @@
 import React, { useEffect, useState } from 'react';
 import { Appointment, AppointmentStatus, User, Column, Doctor } from '../types';
 import { dataService } from '../services/mockSupabase';
-import { Phone, User as UserIcon, Edit2, X, Save, Trash2, Calendar as CalendarIcon, Stethoscope, ChevronDown, AlertTriangle } from 'lucide-react';
+import { Phone, User as UserIcon, Edit2, X, Save, Trash2, Calendar as CalendarIcon, Stethoscope, ChevronDown, AlertTriangle, MessageSquare } from 'lucide-react';
 import { DatePicker } from './DatePicker';
 import { useToast } from './ToastProvider';
+import { useRealtimeAppointments } from '../hooks/useRealtimeData';
 
 interface CRMProps {
   user: User;
@@ -15,7 +16,8 @@ interface CRMProps {
 }
 
 const COLUMNS: Column[] = [
-  { id: AppointmentStatus.EM_CONTATO, title: 'Em Contato', color: 'bg-yellow-100 border-yellow-300' },
+  { id: AppointmentStatus.EM_CONTATO, title: 'Bot / Em Contato', color: 'bg-yellow-100 border-yellow-300' },
+  { id: AppointmentStatus.ATENDIMENTO_HUMANO, title: 'Atend. Humano', color: 'bg-purple-100 border-purple-300' },
   { id: AppointmentStatus.AGENDADO, title: 'Agendados', color: 'bg-blue-100 border-blue-300' },
   { id: AppointmentStatus.ATENDIDO, title: 'Atendidos', color: 'bg-green-100 border-green-300' },
   { id: AppointmentStatus.NAO_VEIO, title: 'Não Veio', color: 'bg-red-100 border-red-300' },
@@ -23,11 +25,15 @@ const COLUMNS: Column[] = [
 
 export const CRM: React.FC<CRMProps> = ({ user, doctors, selectedDoctorId, onDoctorChange, isConsultorio }) => {
   const { showToast } = useToast();
-  const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [selectedDate, setSelectedDate] = useState<string>(new Date().toISOString().split('T')[0]);
-  
-  const [loading, setLoading] = useState(true);
   const [draggedApptId, setDraggedApptId] = useState<string | null>(null);
+
+  // ✅ REALTIME HOOK: Substitui polling manual
+  const { data: appointments, loading, setData: setAppointments } = useRealtimeAppointments(
+    user.clinicId, 
+    selectedDate, 
+    selectedDoctorId
+  );
 
   // Modal State
   const [isDetailsModalOpen, setIsDetailsModalOpen] = useState(false);
@@ -51,35 +57,9 @@ export const CRM: React.FC<CRMProps> = ({ user, doctors, selectedDoctorId, onDoc
     }
   }, [user.clinicId, selectedDoctorId]);
 
-  // 2. Subscribe to Appointments (Real-time)
-  useEffect(() => {
-    if (!selectedDoctorId) return;
-    setLoading(true);
-    
-    // Initial fetch to show data immediately
-    dataService.getAppointments(user.clinicId, selectedDate, selectedDoctorId).then(data => {
-        setAppointments(data);
-        setLoading(false);
-    });
-
-    // Real-time Subscription
-    const unsubscribe = dataService.subscribeToAppointments(
-        user.clinicId, 
-        selectedDate, 
-        selectedDoctorId,
-        (data) => {
-            setAppointments(data);
-            setLoading(false);
-        }
-    );
-
-    return () => unsubscribe();
-  }, [user.clinicId, selectedDate, selectedDoctorId]);
-
   const handleDragStart = (e: React.DragEvent, id: string) => {
     setDraggedApptId(id);
     e.dataTransfer.effectAllowed = 'move';
-    // Ocultar imagem fantasma padrão se quiser customizar (opcional)
   };
 
   const handleDragOver = (e: React.DragEvent) => {
@@ -88,44 +68,31 @@ export const CRM: React.FC<CRMProps> = ({ user, doctors, selectedDoctorId, onDoc
 
   const handleDrop = async (e: React.DragEvent, targetStatus: AppointmentStatus) => {
     e.preventDefault();
-    if (!draggedApptId) return;
+    if (!draggedApptId || !appointments) return;
 
     const appt = appointments.find(a => a.id === draggedApptId);
     if (!appt || appt.status === targetStatus) return;
 
     // --- OPTIMISTIC UPDATE START ---
-    // 1. Snapshot do estado anterior (para Rollback em caso de erro)
     const previousAppt = { ...appt };
 
     try {
         // 2. Atualização Otimista: Atualiza a UI imediatamente
-        setAppointments(prev => prev.map(a => 
+        setAppointments(prev => (prev || []).map(a => 
             a.id === draggedApptId ? { ...a, status: targetStatus } : a
         ));
 
         // 3. Chamada ao Servidor (Background)
-        const updatedAppt = await dataService.updateAppointmentStatus(draggedApptId, targetStatus);
+        // Note: The service will emit a websocket event which will re-trigger the hook.
+        // But since we updated optimistically, the UI feels instant.
+        await dataService.updateAppointmentStatus(draggedApptId, targetStatus);
         
-        // 4. Sucesso: Sincronização Silenciosa
-        // Atualizamos com o objeto retornado pelo servidor para garantir que temos
-        // os dados mais recentes (ex: updatedAt, logs gerados no backend)
-        setAppointments(prev => prev.map(a => 
-            a.id === draggedApptId ? updatedAppt : a
-        ));
-
-        showToast('success', `Movido para ${targetStatus.replace('_', ' ')}`);
-
-        // Log N8N simulation (Dev console only)
-        if (targetStatus === AppointmentStatus.ATENDIDO) {
-            console.log(`[N8N] Triggering Review Request for ${appt.patient?.name}`);
-        } else if (targetStatus === AppointmentStatus.NAO_VEIO) {
-            console.log(`[N8N] Triggering Recovery Flow for ${appt.patient?.name}`);
-        }
+        showToast('success', `Movido para ${targetStatus.replace(/_/g, ' ')}`);
 
     } catch (error) {
         // 5. Erro: Rollback (Reverter ao estado anterior)
         console.error("Drop failed:", error);
-        setAppointments(prev => prev.map(a => 
+        setAppointments(prev => (prev || []).map(a => 
             a.id === draggedApptId ? previousAppt : a
         ));
         showToast('error', 'Erro ao atualizar status. Revertendo...');
@@ -195,13 +162,18 @@ export const CRM: React.FC<CRMProps> = ({ user, doctors, selectedDoctorId, onDoc
   };
 
   const currentDoctorName = doctors.find(d => d.id === selectedDoctorId)?.name;
+  
+  // Safe default
+  const appointmentList = appointments || [];
 
   return (
     <div className="h-full flex flex-col p-6 animate-in fade-in duration-500">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
         <div>
           <h2 className="text-2xl font-bold text-gray-800">Gestão de Pacientes (CRM)</h2>
-          <p className="text-sm text-gray-500">Arraste os cards para mudar o status e disparar automações.</p>
+          <p className="text-sm text-gray-500">
+            Acompanhe o fluxo de atendimento desde o contato inicial até o pós-consulta.
+          </p>
         </div>
         
         <div className="flex items-center gap-3">
@@ -233,30 +205,39 @@ export const CRM: React.FC<CRMProps> = ({ user, doctors, selectedDoctorId, onDoc
       </div>
 
       <div className="flex-1 overflow-x-auto overflow-y-hidden pb-4">
-        <div className="flex gap-6 h-full min-w-[1000px]">
+        <div className="flex gap-4 h-full min-w-[1200px]">
           {COLUMNS.map(column => (
             <div 
                 key={column.id} 
-                className="flex-1 flex flex-col bg-gray-100/50 rounded-xl border border-gray-200"
+                className="flex-1 flex flex-col rounded-xl border bg-gray-100/50 border-gray-200"
                 onDragOver={handleDragOver}
                 onDrop={(e) => handleDrop(e, column.id)}
             >
               <div className={`p-4 border-b border-gray-200 rounded-t-xl ${column.color.replace('bg-', 'bg-opacity-50 ')}`}>
                 <div className="flex justify-between items-center">
-                    <h3 className="font-bold text-gray-700">{column.title}</h3>
+                    <h3 className="font-bold text-sm uppercase tracking-wide text-gray-700">
+                        {column.title}
+                    </h3>
                     <span className="bg-white/50 text-gray-600 text-xs font-bold px-2 py-1 rounded-full">
-                        {appointments.filter(a => a.status === column.id).length}
+                        {appointmentList.filter(a => a.status === column.id).length}
                     </span>
                 </div>
               </div>
 
               <div className="p-3 flex-1 overflow-y-auto space-y-3 custom-scrollbar">
                 {loading ? (
-                    <div className="text-center text-gray-400 text-sm mt-10">Carregando...</div>
-                ) : appointments.filter(a => a.status === column.id).length === 0 ? (
-                    <div className="text-center text-gray-300 text-sm mt-10 italic">Vazio</div>
+                    <div className="text-center text-gray-400 text-sm mt-10">
+                        <div className="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-2" />
+                        Carregando...
+                    </div>
+                ) : appointmentList.filter(a => a.status === column.id).length === 0 ? (
+                    <div className="text-center text-gray-300 text-sm mt-10 italic">
+                        {column.id === AppointmentStatus.ATENDIMENTO_HUMANO 
+                            ? 'Nenhum paciente aguardando'
+                            : 'Vazio'}
+                    </div>
                 ) : (
-                    appointments
+                    appointmentList
                         .filter(a => a.status === column.id)
                         .map(appt => (
                             <div
@@ -264,11 +245,11 @@ export const CRM: React.FC<CRMProps> = ({ user, doctors, selectedDoctorId, onDoc
                                 draggable
                                 onDragStart={(e) => handleDragStart(e, appt.id)}
                                 onClick={() => openDetails(appt)}
-                                className="bg-white p-4 rounded-lg shadow-sm border border-gray-100 cursor-move hover:shadow-md transition-all group active:scale-95 active:shadow-lg"
+                                className="bg-white p-4 rounded-lg shadow-sm border border-gray-100 cursor-move transition-all group active:scale-95 active:shadow-lg hover:shadow-md"
                             >
                                 <div className="flex justify-between items-start mb-2">
                                     <span className="font-bold text-gray-800">{appt.time}</span>
-                                    {appt.procedure && (
+                                    {appt.procedure && column.id !== AppointmentStatus.ATENDIMENTO_HUMANO && (
                                         <span className="text-[10px] bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded border border-gray-200 truncate max-w-[100px]">
                                             {appt.procedure}
                                         </span>
@@ -276,18 +257,23 @@ export const CRM: React.FC<CRMProps> = ({ user, doctors, selectedDoctorId, onDoc
                                 </div>
                                 <div className="flex items-center gap-2 mb-1">
                                     <UserIcon size={14} className="text-gray-400" />
-                                    {/* UPDATED: Patient Name Access */}
                                     <p className="font-medium text-gray-900 text-sm truncate">{appt.patient?.name || 'Paciente'}</p>
                                 </div>
                                 <div className="flex items-center gap-2">
                                     <Phone size={14} className="text-gray-400" />
-                                    {/* UPDATED: Patient Phone Access */}
                                     <p className="text-xs text-gray-500">{appt.patient?.phone}</p>
                                 </div>
                                 {appt.notes && (
                                     <div className="mt-2 pt-2 border-t border-gray-50 text-[11px] text-gray-400 italic truncate">
                                         "{appt.notes}"
                                     </div>
+                                )}
+                                
+                                {column.id === AppointmentStatus.ATENDIMENTO_HUMANO && (
+                                    <button className="mt-3 w-full py-1.5 bg-green-600 text-white text-xs font-bold rounded hover:bg-green-700 transition-colors flex items-center justify-center gap-1 shadow-sm">
+                                        <MessageSquare size={12} />
+                                        Assumir no WhatsApp
+                                    </button>
                                 )}
                             </div>
                         ))
@@ -320,7 +306,6 @@ export const CRM: React.FC<CRMProps> = ({ user, doctors, selectedDoctorId, onDoc
                         <div className="bg-blue-50 p-2 rounded-lg text-blue-600 mt-1"><UserIcon size={20} /></div>
                         <div>
                             <h4 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Paciente</h4>
-                            {/* UPDATED */}
                             <p className="text-lg font-semibold text-gray-900">{selectedAppointment.patient?.name || 'Não encontrado'}</p>
                         </div>
                     </div>
@@ -328,7 +313,6 @@ export const CRM: React.FC<CRMProps> = ({ user, doctors, selectedDoctorId, onDoc
                         <div className="bg-green-50 p-2 rounded-lg text-green-600 mt-1"><Phone size={20} /></div>
                         <div>
                             <h4 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Contato</h4>
-                            {/* UPDATED */}
                             <p className="text-base text-gray-700 font-medium">{selectedAppointment.patient?.phone}</p>
                         </div>
                     </div>
@@ -444,7 +428,7 @@ export const CRM: React.FC<CRMProps> = ({ user, doctors, selectedDoctorId, onDoc
                     <button
                         onClick={() => { setIsCancelModalOpen(false); setCancellationReason(''); }}
                         className="flex-1 py-2.5 px-4 border border-gray-200 rounded-xl text-gray-700 font-medium hover:bg-gray-50 transition-colors"
-                        disabled={loading}
+                        disabled={loading} // Hook loading state
                     >
                         Voltar
                     </button>

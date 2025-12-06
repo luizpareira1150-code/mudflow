@@ -1,6 +1,8 @@
 
+
 import { DoctorAvailability, DoctorAbsence, DayOfWeek, AvailabilityValidationResult } from '../types';
 import { STORAGE_KEYS, getStorage, setStorage, initialAvailability } from './storage';
+import { getDayOfWeekBR } from '../utils/dateUtils';
 
 class DoctorAvailabilityService {
   
@@ -89,12 +91,14 @@ class DoctorAvailabilityService {
 
   /**
    * Valida se médico está disponível em determinada data
+   * @param computeSuggestions Se true, calcula próximas datas em caso de falha. Se false, apenas retorna status (evita recursão infinita).
    */
   async validateAvailability(
     doctorId: string, 
     organizationId: string, 
     date: string,
-    time?: string
+    time?: string,
+    computeSuggestions: boolean = true
   ): Promise<AvailabilityValidationResult> {
     const availability = await this.getDoctorAvailability(doctorId, organizationId);
     
@@ -102,15 +106,18 @@ class DoctorAvailabilityService {
       return { isAvailable: true }; // Se não configurou, permite tudo (fallback)
     }
 
-    const [year, month, day] = date.split('-').map(Number);
-    const dateObj = new Date(year, month - 1, day);
-    const dayOfWeek = dateObj.getDay() as DayOfWeek;
+    // Timezone safe logic
+    const dayOfWeek = getDayOfWeekBR(date) as DayOfWeek;
 
     // 1. Verificar períodos de ausência
     const absences = availability.absences;
     for (const absence of absences) {
       if (date >= absence.startDate && date <= absence.endDate) {
-        const nextAvailableDates = await this.getNextAvailableDates(doctorId, organizationId, absence.endDate, 5);
+        // CORREÇÃO DE LOOP INFINITO: Só busca sugestões se a flag permitir
+        const nextAvailableDates = computeSuggestions 
+            ? await this.getNextAvailableDates(doctorId, organizationId, absence.endDate, 5)
+            : [];
+            
         return {
           isAvailable: false,
           reason: `Médico em ${absence.type.toLowerCase()}: ${absence.reason}`,
@@ -122,7 +129,10 @@ class DoctorAvailabilityService {
     // 2. Verificar se o dia da semana está configurado
     const dayConfig = availability.weekSchedule[dayOfWeek];
     if (!dayConfig || !dayConfig.enabled) {
-      const nextAvailableDates = await this.getNextAvailableDates(doctorId, organizationId, date, 5);
+      const nextAvailableDates = computeSuggestions 
+        ? await this.getNextAvailableDates(doctorId, organizationId, date, 5)
+        : [];
+        
       return {
         isAvailable: false,
         reason: `Médico não atende às ${this.getDayName(dayOfWeek)}s`,
@@ -146,11 +156,13 @@ class DoctorAvailabilityService {
 
     // 4. Verificar limite de antecedência
     if (availability.advanceBookingDays) {
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      const targetDate = new Date(year, month - 1, day);
+      // Comparação simples de string data para evitar timezone shift
+      const today = new Date().toISOString().split('T')[0];
       
-      const diffTime = targetDate.getTime() - today.getTime();
+      // Cálculo aproximado de diferença em dias
+      const d1 = new Date(today);
+      const d2 = new Date(date);
+      const diffTime = d2.getTime() - d1.getTime();
       const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)); 
       
       if (diffDays > availability.advanceBookingDays) {
@@ -192,7 +204,8 @@ class DoctorAvailabilityService {
       const day = String(currentDate.getDate()).padStart(2, '0');
       const dateStr = `${year}-${month}-${day}`;
 
-      const validation = await this.validateAvailability(doctorId, organizationId, dateStr);
+      // CRITICAL FIX: Pass false to avoid recursion loop
+      const validation = await this.validateAvailability(doctorId, organizationId, dateStr, undefined, false);
       
       if (validation.isAvailable) {
         availableDates.push(dateStr);

@@ -1,25 +1,20 @@
 
-
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { Patient, PatientStatus } from '../types';
 import { generateSmartSummary } from '../services/geminiService';
 import { Search, Filter, MoreHorizontal, Sparkles, X, Activity, UserPlus } from 'lucide-react';
-import { dataService, authService } from '../services/mockSupabase';
+import { authService } from '../services/mockSupabase';
+import { useRealtimePatients } from '../hooks/useRealtimeData';
 
 const Patients: React.FC = () => {
-  const [patients, setPatients] = useState<Patient[]>([]);
+  // ✅ REALTIME HOOK
+  const currentUser = authService.getCurrentUser();
+  const { data: patients, loading } = useRealtimePatients(currentUser?.clinicId || '');
+
   const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null);
   const [summary, setSummary] = useState<string>("");
   const [loadingSummary, setLoadingSummary] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
-
-  const currentUser = authService.getCurrentUser();
-
-  useEffect(() => {
-    if (currentUser) {
-        dataService.getAllPatients(currentUser.clinicId).then(setPatients);
-    }
-  }, [currentUser?.clinicId]);
 
   const handleViewPatient = async (patient: Patient) => {
     setSelectedPatient(patient);
@@ -35,7 +30,8 @@ const Patients: React.FC = () => {
     setSummary("");
   };
 
-  const filteredPatients = patients.filter(p => 
+  const patientList = patients || [];
+  const filteredPatients = patientList.filter(p => 
     p.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
     p.email?.toLowerCase().includes(searchTerm.toLowerCase()) ||
     p.condition?.toLowerCase().includes(searchTerm.toLowerCase())
@@ -86,7 +82,13 @@ const Patients: React.FC = () => {
                     </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                    {filteredPatients.length === 0 ? (
+                    {loading ? (
+                        <tr>
+                            <td colSpan={5} className="px-6 py-12 text-center text-slate-400">
+                                Carregando...
+                            </td>
+                        </tr>
+                    ) : filteredPatients.length === 0 ? (
                         <tr>
                             <td colSpan={5} className="px-6 py-12 text-center text-slate-400 italic">
                                 Nenhum paciente encontrado.

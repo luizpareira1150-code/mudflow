@@ -1,8 +1,10 @@
 
+
 import React, { useState, useEffect } from 'react';
-import { Doctor, DoctorAvailability, DoctorAbsence, DayOfWeek } from '../types';
+import { Doctor, DoctorAvailability, DoctorAbsence, DayOfWeek, AgendaReleaseType } from '../types';
 import { doctorAvailabilityService } from '../services/doctorAvailabilityService';
-import { Clock, X, Plus, Trash2, AlertCircle, Save, Settings, CalendarOff, AlertTriangle } from 'lucide-react';
+import { agendaReleaseService } from '../services/agendaReleaseService';
+import { Clock, X, Plus, Trash2, AlertCircle, Save, Settings, CalendarOff, AlertTriangle, Calendar } from 'lucide-react';
 import { useToast } from './ToastProvider';
 
 interface DoctorAvailabilityConfigProps {
@@ -10,7 +12,7 @@ interface DoctorAvailabilityConfigProps {
   onClose: () => void;
 }
 
-type TabType = 'schedule' | 'absences' | 'settings';
+type TabType = 'schedule' | 'absences' | 'release_rules' | 'settings';
 
 export const DoctorAvailabilityConfig: React.FC<DoctorAvailabilityConfigProps> = ({ doctor, onClose }) => {
   const { showToast } = useToast();
@@ -18,11 +20,16 @@ export const DoctorAvailabilityConfig: React.FC<DoctorAvailabilityConfigProps> =
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   
-  // State
+  // State: Availability
   const [weekSchedule, setWeekSchedule] = useState(doctorAvailabilityService.getDefaultAvailability());
   const [absences, setAbsences] = useState<DoctorAbsence[]>([]);
   const [advanceBookingDays, setAdvanceBookingDays] = useState(30);
   const [maxAppointmentsPerDay, setMaxAppointmentsPerDay] = useState<number | undefined>();
+
+  // State: Release Rules
+  const [releaseType, setReleaseType] = useState<AgendaReleaseType>(AgendaReleaseType.ALWAYS_OPEN);
+  const [weeklyRelease, setWeeklyRelease] = useState({ dayOfWeek: DayOfWeek.MONDAY, hour: '07:00', advanceDays: 2 });
+  const [monthlyRelease, setMonthlyRelease] = useState({ releaseDay: 22, fallbackToWeekday: true, hour: '00:00', targetMonthOffset: 1 });
 
   // New Absence Form State
   const [newAbsence, setNewAbsence] = useState({
@@ -49,7 +56,11 @@ export const DoctorAvailabilityConfig: React.FC<DoctorAvailabilityConfigProps> =
   const loadAvailability = async () => {
     setLoading(true);
     try {
-      const availability = await doctorAvailabilityService.getDoctorAvailability(doctor.id, doctor.organizationId);
+      const [availability, releaseSchedule] = await Promise.all([
+          doctorAvailabilityService.getDoctorAvailability(doctor.id, doctor.organizationId),
+          agendaReleaseService.getSchedule(doctor.id, doctor.organizationId)
+      ]);
+
       if (availability) {
         setWeekSchedule(availability.weekSchedule);
         setAbsences(availability.absences || []);
@@ -62,6 +73,13 @@ export const DoctorAvailabilityConfig: React.FC<DoctorAvailabilityConfigProps> =
         setAdvanceBookingDays(30);
         setMaxAppointmentsPerDay(undefined);
       }
+
+      if (releaseSchedule) {
+          setReleaseType(releaseSchedule.releaseType);
+          if (releaseSchedule.weeklyConfig) setWeeklyRelease(releaseSchedule.weeklyConfig);
+          if (releaseSchedule.monthlyConfig) setMonthlyRelease(releaseSchedule.monthlyConfig);
+      }
+
     } catch (error) {
       console.error(error);
       showToast('error', 'Erro ao carregar configurações.');
@@ -81,10 +99,20 @@ export const DoctorAvailabilityConfig: React.FC<DoctorAvailabilityConfigProps> =
         advanceBookingDays,
         maxAppointmentsPerDay
       });
-      showToast('success', 'Disponibilidade salva com sucesso!');
+
+      await agendaReleaseService.saveSchedule({
+        doctorId: doctor.id,
+        organizationId: doctor.organizationId,
+        releaseType,
+        weeklyConfig: releaseType === AgendaReleaseType.WEEKLY_RELEASE ? weeklyRelease : undefined,
+        monthlyConfig: releaseType === AgendaReleaseType.MONTHLY_RELEASE ? monthlyRelease : undefined,
+        enabled: releaseType !== AgendaReleaseType.ALWAYS_OPEN
+      });
+
+      showToast('success', 'Configurações salvas com sucesso!');
       onClose();
     } catch (error) {
-      showToast('error', 'Erro ao salvar disponibilidade');
+      showToast('error', 'Erro ao salvar configurações');
     } finally {
       setSaving(false);
     }
@@ -160,10 +188,10 @@ export const DoctorAvailabilityConfig: React.FC<DoctorAvailabilityConfigProps> =
       </div>
 
       {/* Tabs */}
-      <div className="flex border-b border-gray-100 px-6">
+      <div className="flex border-b border-gray-100 px-6 overflow-x-auto">
         <button
             onClick={() => setActiveTab('schedule')}
-            className={`flex items-center gap-2 px-4 py-4 text-sm font-medium transition-colors border-b-2 ${
+            className={`flex items-center gap-2 px-4 py-4 text-sm font-medium transition-colors border-b-2 whitespace-nowrap ${
                 activeTab === 'schedule' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'
             }`}
         >
@@ -172,7 +200,7 @@ export const DoctorAvailabilityConfig: React.FC<DoctorAvailabilityConfigProps> =
         </button>
         <button
             onClick={() => setActiveTab('absences')}
-            className={`flex items-center gap-2 px-4 py-4 text-sm font-medium transition-colors border-b-2 ${
+            className={`flex items-center gap-2 px-4 py-4 text-sm font-medium transition-colors border-b-2 whitespace-nowrap ${
                 activeTab === 'absences' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'
             }`}
         >
@@ -181,8 +209,17 @@ export const DoctorAvailabilityConfig: React.FC<DoctorAvailabilityConfigProps> =
             {absences.length > 0 && <span className="bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full text-xs ml-2">{absences.length}</span>}
         </button>
         <button
+            onClick={() => setActiveTab('release_rules')}
+            className={`flex items-center gap-2 px-4 py-4 text-sm font-medium transition-colors border-b-2 whitespace-nowrap ${
+                activeTab === 'release_rules' ? 'border-green-600 text-green-600' : 'border-transparent text-gray-500 hover:text-gray-700'
+            }`}
+        >
+            <Calendar size={18} />
+            Regras de Abertura
+        </button>
+        <button
             onClick={() => setActiveTab('settings')}
-            className={`flex items-center gap-2 px-4 py-4 text-sm font-medium transition-colors border-b-2 ${
+            className={`flex items-center gap-2 px-4 py-4 text-sm font-medium transition-colors border-b-2 whitespace-nowrap ${
                 activeTab === 'settings' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'
             }`}
         >
@@ -367,6 +404,136 @@ export const DoctorAvailabilityConfig: React.FC<DoctorAvailabilityConfigProps> =
                                     ))}
                                 </div>
                             )}
+                        </div>
+                    </div>
+                )}
+
+                {/* TAB: RELEASE RULES */}
+                {activeTab === 'release_rules' && (
+                    <div className="max-w-3xl mx-auto space-y-6">
+                        <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
+                            <h3 className="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2">
+                                <Calendar size={20} className="text-green-600" />
+                                Regras de Abertura de Agenda
+                            </h3>
+                            
+                            <div className="space-y-4">
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-2">Tipo de Abertura</label>
+                                    <select
+                                        value={releaseType}
+                                        onChange={(e) => setReleaseType(e.target.value as AgendaReleaseType)}
+                                        className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-green-500 outline-none"
+                                    >
+                                        <option value={AgendaReleaseType.ALWAYS_OPEN}>Sempre Aberta (Padrão)</option>
+                                        <option value={AgendaReleaseType.WEEKLY_RELEASE}>Abertura Semanal</option>
+                                        <option value={AgendaReleaseType.MONTHLY_RELEASE}>Abertura Mensal</option>
+                                    </select>
+                                </div>
+
+                                {releaseType === AgendaReleaseType.WEEKLY_RELEASE && (
+                                    <div className="p-4 bg-green-50 border border-green-200 rounded-lg space-y-3">
+                                        <p className="text-sm font-medium text-green-800">
+                                            📅 Exemplo: Médico atende toda quarta, agenda abre toda segunda às 7h
+                                        </p>
+                                        
+                                        <div className="grid grid-cols-3 gap-3">
+                                            <div>
+                                                <label className="block text-xs font-bold text-gray-600 mb-1">Dia de Abertura</label>
+                                                <select
+                                                    value={weeklyRelease.dayOfWeek}
+                                                    onChange={(e) => setWeeklyRelease({...weeklyRelease, dayOfWeek: Number(e.target.value)})}
+                                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white"
+                                                >
+                                                    <option value={DayOfWeek.SUNDAY}>Domingo</option>
+                                                    <option value={DayOfWeek.MONDAY}>Segunda</option>
+                                                    <option value={DayOfWeek.TUESDAY}>Terça</option>
+                                                    <option value={DayOfWeek.WEDNESDAY}>Quarta</option>
+                                                    <option value={DayOfWeek.THURSDAY}>Quinta</option>
+                                                    <option value={DayOfWeek.FRIDAY}>Sexta</option>
+                                                    <option value={DayOfWeek.SATURDAY}>Sábado</option>
+                                                </select>
+                                            </div>
+                                            
+                                            <div>
+                                                <label className="block text-xs font-bold text-gray-600 mb-1">Horário</label>
+                                                <input
+                                                    type="time"
+                                                    value={weeklyRelease.hour}
+                                                    onChange={(e) => setWeeklyRelease({...weeklyRelease, hour: e.target.value})}
+                                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                                                />
+                                            </div>
+                                            
+                                            <div>
+                                                <label className="block text-xs font-bold text-gray-600 mb-1">Antecedência (dias)</label>
+                                                <input
+                                                    type="number"
+                                                    value={weeklyRelease.advanceDays}
+                                                    onChange={(e) => setWeeklyRelease({...weeklyRelease, advanceDays: Number(e.target.value)})}
+                                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                                                    min="1"
+                                                    max="60"
+                                                />
+                                            </div>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {releaseType === AgendaReleaseType.MONTHLY_RELEASE && (
+                                    <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg space-y-3">
+                                        <p className="text-sm font-medium text-blue-800">
+                                            📅 Exemplo: Médico atende toda sexta, agenda abre todo dia 22 para mês seguinte
+                                        </p>
+                                        
+                                        <div className="grid grid-cols-3 gap-3">
+                                            <div>
+                                                <label className="block text-xs font-bold text-gray-600 mb-1">Dia do Mês</label>
+                                                <input
+                                                    type="number"
+                                                    value={monthlyRelease.releaseDay}
+                                                    onChange={(e) => setMonthlyRelease({...monthlyRelease, releaseDay: Number(e.target.value)})}
+                                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                                                    min="1"
+                                                    max="31"
+                                                />
+                                            </div>
+                                            
+                                            <div>
+                                                <label className="block text-xs font-bold text-gray-600 mb-1">Horário</label>
+                                                <input
+                                                    type="time"
+                                                    value={monthlyRelease.hour}
+                                                    onChange={(e) => setMonthlyRelease({...monthlyRelease, hour: e.target.value})}
+                                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                                                />
+                                            </div>
+                                            
+                                            <div>
+                                                <label className="block text-xs font-bold text-gray-600 mb-1">Mês(es) à frente</label>
+                                                <input
+                                                    type="number"
+                                                    value={monthlyRelease.targetMonthOffset}
+                                                    onChange={(e) => setMonthlyRelease({...monthlyRelease, targetMonthOffset: Number(e.target.value)})}
+                                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                                                    min="1"
+                                                    max="6"
+                                                />
+                                            </div>
+                                        </div>
+                                        
+                                        <label className="flex items-center gap-2 text-sm mt-2">
+                                            <input
+                                                type="checkbox"
+                                                checked={monthlyRelease.fallbackToWeekday}
+                                                onChange={(e) => setMonthlyRelease({...monthlyRelease, fallbackToWeekday: e.target.checked})}
+                                                className="w-4 h-4 rounded border-gray-300 text-blue-600"
+                                            />
+                                            <span className="text-gray-600">Se cair em fim de semana, usar dia útil anterior</span>
+                                        </label>
+                                    </div>
+                                )}
+                            </div>
                         </div>
                     </div>
                 )}

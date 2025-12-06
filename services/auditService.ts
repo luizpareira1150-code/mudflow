@@ -1,3 +1,4 @@
+
 import { AuditLog, AuditSource, User } from '../types';
 import { STORAGE_KEYS, getStorage, setStorage, initialLogs, delay } from './storage';
 
@@ -8,6 +9,7 @@ const getCurrentUserFromStorage = (): User | null => {
 };
 
 export const systemLogService = {
+  // ESCALABILIDADE: Adicionado suporte a paginação (limit/offset)
   getLogs: async (
     clinicId: string, 
     filters?: {
@@ -16,9 +18,11 @@ export const systemLogService = {
         source?: string;
         startDate?: string;
         endDate?: string;
+        limit?: number; // Novo
+        offset?: number; // Novo
     }
-  ): Promise<AuditLog[]> => {
-    await delay(300);
+  ): Promise<{ logs: AuditLog[], total: number }> => {
+    await delay(300); // Simulando latência de rede
     const logs = getStorage<AuditLog[]>(STORAGE_KEYS.LOGS, initialLogs);
     
     let filtered = logs.filter(l => l.organizationId === clinicId);
@@ -52,13 +56,22 @@ export const systemLogService = {
     }
 
     // Sort desc
-    return filtered.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+    filtered.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+
+    const total = filtered.length;
+    const limit = filters?.limit || 50;
+    const offset = filters?.offset || 0;
+
+    // Retorna apenas a fatia da página
+    return {
+        logs: filtered.slice(offset, offset + limit),
+        total
+    };
   },
   
   createLog: async (logParams: Omit<AuditLog, 'id' | 'timestamp' | 'createdAt' | 'userId' | 'userName'> & { userId?: string, userName?: string }) => {
     const logs = getStorage<AuditLog[]>(STORAGE_KEYS.LOGS, initialLogs);
     
-    // Resolve user context independently to avoid circular deps
     let userId = logParams.userId;
     let userName = logParams.userName;
 
@@ -87,13 +100,21 @@ export const systemLogService = {
       userName: userName!
     };
     
+    // Performance: Manter apenas os últimos 5000 logs no mock para não travar o browser
+    if (logs.length > 5000) {
+        logs.shift(); // Remove o mais antigo
+    }
+    
     logs.push(newLog);
     setStorage(STORAGE_KEYS.LOGS, logs);
     return newLog;
   },
 
   getAuditStats: async (clinicId: string) => {
-      const logs = await systemLogService.getLogs(clinicId);
+      // Fetch sem paginação apenas para stats (em produção seria um SELECT COUNT)
+      // Como estamos no mock, pegamos tudo, mas filtramos rápido.
+      const logs = getStorage<AuditLog[]>(STORAGE_KEYS.LOGS, initialLogs).filter(l => l.organizationId === clinicId);
+      
       const now = new Date();
       const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
       

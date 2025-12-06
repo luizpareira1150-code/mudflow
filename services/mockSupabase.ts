@@ -1,5 +1,4 @@
 
-
 import { AppointmentStatus, AuditAction, AuditSource } from '../types';
 import { N8NIntegrationService } from './n8nIntegration';
 import { slotReservationService } from './slotReservationService';
@@ -14,6 +13,7 @@ import { settingsService } from './settingsService';
 import { analyticsService } from './analyticsService';
 import { doctorAvailabilityService } from './doctorAvailabilityService';
 import { rateLimiterService } from './rateLimiterService';
+import { monitoringService } from './monitoring';
 
 // Re-export specific services for direct usage
 export { authService } from './authService';
@@ -23,6 +23,7 @@ export { patientService } from './patientService'; // Exporting this helps other
 export { settingsService } from './settingsService';
 export { doctorAvailabilityService } from './doctorAvailabilityService';
 export { rateLimiterService } from './rateLimiterService';
+export { monitoringService } from './monitoring'; // New export
 
 // Construct the Aggregated DataService
 // This maintains backward compatibility for existing components

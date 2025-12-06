@@ -1,16 +1,13 @@
 
 import React, { useState } from 'react';
-import { authService } from '../services/mockSupabase';
-import { User } from '../types';
+import { useAuth } from '../contexts/AuthContext';
 import { Lock, User as UserIcon, ShieldCheck, Crown, Stethoscope, Calendar, Briefcase } from 'lucide-react';
 import { useToast } from './ToastProvider';
 
-interface LoginProps {
-  onLogin: (user: User) => void;
-}
-
-export const Login: React.FC<LoginProps> = ({ onLogin }) => {
+export const Login: React.FC = () => {
+  const { login } = useAuth();
   const { showToast } = useToast();
+  
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -22,13 +19,14 @@ export const Login: React.FC<LoginProps> = ({ onLogin }) => {
     setLoading(true);
 
     try {
-      const user = await authService.login(username, password);
-      if (user) {
-        onLogin(user);
-      } else {
+      // O Contexto já chama o authService internamente
+      const success = await login(username, password);
+      
+      if (!success) {
         setError('Credenciais inválidas.');
         showToast('error', 'Usuário ou senha incorretos.');
       }
+      // Se sucesso, o Contexto atualiza o 'user' e o App.tsx redireciona automaticamente
     } catch (err) {
       setError('Erro ao conectar.');
       showToast('error', 'Erro de conexão com o servidor.');
@@ -38,15 +36,13 @@ export const Login: React.FC<LoginProps> = ({ onLogin }) => {
   };
 
   const handleRecovery = async () => {
-    // Simulating recovery flow logic since backend is mock
     if (!username) {
         showToast('warning', 'Digite seu usuário para recuperar a senha.');
         return;
     }
     showToast('info', 'Enviando solicitação...', 1000);
     try {
-        await new Promise(resolve => setTimeout(resolve, 1500)); // Mock delay
-        // In a real app we would call authService.recoverPassword(username)
+        await new Promise(resolve => setTimeout(resolve, 1500));
         showToast('success', 'Link de recuperação enviado! Verifique seu WhatsApp/Email.');
     } catch (e) {
         showToast('error', 'Erro ao enviar link de recuperação.');
@@ -62,7 +58,6 @@ export const Login: React.FC<LoginProps> = ({ onLogin }) => {
     <div className="min-h-screen bg-gray-100 flex items-center justify-center p-4 font-sans">
       <div className="max-w-[420px] w-full bg-white rounded-[32px] shadow-xl p-8 md:p-10">
         
-        {/* Logo Section */}
         <div className="flex flex-col items-center mb-8">
           <div className="w-16 h-16 bg-blue-600 rounded-2xl flex items-center justify-center mb-4 shadow-lg shadow-blue-200 transform hover:scale-105 transition-transform duration-300">
             <ShieldCheck className="text-white w-8 h-8" strokeWidth={2.5} />
@@ -72,7 +67,6 @@ export const Login: React.FC<LoginProps> = ({ onLogin }) => {
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-6">
-          {/* Username Input */}
           <div>
             <label className="block text-[11px] font-bold text-gray-400 uppercase tracking-widest mb-2 ml-1">Usuário</label>
             <div className="relative group">
@@ -89,7 +83,6 @@ export const Login: React.FC<LoginProps> = ({ onLogin }) => {
             </div>
           </div>
 
-          {/* Password Input */}
           <div>
             <label className="block text-[11px] font-bold text-gray-400 uppercase tracking-widest mb-2 ml-1">Senha</label>
             <div className="relative group">
@@ -106,7 +99,6 @@ export const Login: React.FC<LoginProps> = ({ onLogin }) => {
             </div>
           </div>
 
-          {/* Forgot Password Link */}
           <div className="flex justify-end pt-1">
             <button 
                 type="button" 
@@ -123,7 +115,6 @@ export const Login: React.FC<LoginProps> = ({ onLogin }) => {
             </div>
           )}
 
-          {/* Submit Button */}
           <button
             type="submit"
             disabled={loading}

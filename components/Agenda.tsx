@@ -8,6 +8,8 @@ import { BookingModal } from './BookingModal';
 import { useToast } from './ToastProvider';
 import { slotReservationService } from '../services/slotReservationService';
 import { DoctorAvailabilityConfig } from './DoctorAvailabilityConfig';
+import { useRealtimeData } from '../hooks/useRealtimeData';
+import { SocketEvent } from '../lib/socketServer';
 
 interface AgendaProps {
   user: User;
@@ -25,7 +27,6 @@ export const Agenda: React.FC<AgendaProps> = ({
   isConsultorio 
 }) => {
   const { showToast } = useToast();
-  // Controlled vs Uncontrolled logic (to support standalone usage if needed)
   const isControlled = propDoctors !== undefined;
   const [internalDoctors, setInternalDoctors] = useState<Doctor[]>([]);
   const [internalSelectedDoctorId, setInternalSelectedDoctorId] = useState<string>('');
@@ -36,8 +37,23 @@ export const Agenda: React.FC<AgendaProps> = ({
 
   // State
   const [selectedDate, setSelectedDate] = useState<string>(new Date().toISOString().split('T')[0]);
-  const [availableSlots, setAvailableSlots] = useState<AvailableSlot[]>([]);
-  const [loading, setLoading] = useState(true);
+  
+  // ✅ REALTIME HOOK: Substitui polling manual para Available Slots
+  // Ouve eventos de criação/edição/exclusão de agendamentos e alterações de config
+  const { data: availableSlots, loading, refresh: refreshSlots } = useRealtimeData<AvailableSlot[]>(
+    () => {
+        if (!selectedDoctorId) return Promise.resolve([]);
+        return dataService.getAvailableSlots(user.clinicId, selectedDoctorId, selectedDate);
+    },
+    [
+        SocketEvent.APPOINTMENT_CREATED,
+        SocketEvent.APPOINTMENT_UPDATED,
+        SocketEvent.APPOINTMENT_DELETED,
+        SocketEvent.APPOINTMENT_STATUS_CHANGED,
+        SocketEvent.AGENDA_CONFIG_UPDATED
+    ],
+    [user.clinicId, selectedDoctorId, selectedDate]
+  );
   
   const [config, setConfig] = useState<AgendaConfig>({ clinicId: user.clinicId, startHour: '08:00', endHour: '18:00', intervalMinutes: 30, availableProcedures: [] });
   const [procedureOptions, setProcedureOptions] = useState<string[]>([]);
@@ -95,6 +111,7 @@ export const Agenda: React.FC<AgendaProps> = ({
     const checkAvailability = async () => {
       if (!selectedDoctorId || !selectedDate) return;
 
+      // Pass true for computeSuggestions, but service handles internal safety
       const validation = await doctorAvailabilityService.validateAvailability(
         selectedDoctorId,
         user.clinicId,
@@ -109,22 +126,6 @@ export const Agenda: React.FC<AgendaProps> = ({
     };
     checkAvailability();
   }, [selectedDate, selectedDoctorId, user.clinicId]);
-
-  // Subscribe to Slots (Real-time Simulation)
-  const refreshSlots = async () => {
-      if (!selectedDoctorId) return;
-      const slots = await dataService.getAvailableSlots(user.clinicId, selectedDoctorId, selectedDate);
-      setAvailableSlots(slots);
-      setLoading(false);
-  };
-
-  useEffect(() => {
-    setLoading(true);
-    refreshSlots();
-    // In a real app, we'd use a subscription. Here we can just poll or rely on refreshSlots.
-    const interval = setInterval(refreshSlots, 5000);
-    return () => clearInterval(interval);
-  }, [selectedDate, selectedDoctorId]);
 
   const handleSlotClick = async (slot: AvailableSlot) => {
     // Verificar se está reservado temporariamente por outra pessoa
@@ -172,11 +173,10 @@ export const Agenda: React.FC<AgendaProps> = ({
     }
 
     try {
-        setLoading(true);
         await dataService.deleteAppointment(selectedAppointment.id, cancellationReason);
         setIsCancelModalOpen(false);
         setIsDetailsModalOpen(false);
-        refreshSlots();
+        refreshSlots(); // Optimistic update handled by hook, but explicit refresh ensures
         if (selectedAppointment.status === AppointmentStatus.BLOQUEADO) {
             showToast('success', 'Horário liberado.');
         } else {
@@ -185,7 +185,6 @@ export const Agenda: React.FC<AgendaProps> = ({
     } catch (error) {
         showToast('error', 'Erro ao excluir.');
     } finally {
-        setLoading(false);
         setCancellationReason('');
     }
   };
@@ -226,6 +225,7 @@ export const Agenda: React.FC<AgendaProps> = ({
   };
 
   const currentDoctor = doctors.find(d => d.id === selectedDoctorId);
+  const slotsToRender = availableSlots || [];
 
   return (
     <div className="h-full flex flex-col p-6 animate-in fade-in duration-500 bg-slate-50 rounded-2xl">
@@ -314,16 +314,18 @@ export const Agenda: React.FC<AgendaProps> = ({
              </div>
         )}
 
-        {availableSlots.length === 0 && !loading ? (
+        {slotsToRender.length === 0 && !loading ? (
            <div className="h-full flex flex-col items-center justify-center text-gray-400">
              <AlertCircle size={48} className="mb-4 text-gray-300" />
              <p>Nenhum horário disponível para esta data.</p>
-             <p className="text-sm mt-1">Verifique as configurações de dias e horários ou selecione outra data.</p>
-             <button onClick={() => setIsConfigOpen(true)} className="mt-4 text-blue-600 hover:underline">Configurar Agenda</button>
+             <p className="text-sm mt-1">Verifique as configurações de dias, horários ou bloqueios de agenda.</p>
+             {availabilityInfo ? null : (
+                 <button onClick={() => setIsConfigOpen(true)} className="mt-4 text-blue-600 hover:underline">Configurar Agenda</button>
+             )}
            </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-            {availableSlots.map(slot => {
+            {slotsToRender.map(slot => {
               const appt = slot.appointment;
               const isBlocked = appt?.status === AppointmentStatus.BLOQUEADO;
               const isAvailable = !slot.isBooked && !slot.isReserved;
@@ -599,7 +601,7 @@ export const Agenda: React.FC<AgendaProps> = ({
                     <button
                         onClick={() => { setIsCancelModalOpen(false); setCancellationReason(''); }}
                         className="flex-1 py-2.5 px-4 border border-gray-200 rounded-xl text-gray-700 font-medium hover:bg-gray-50 transition-colors"
-                        disabled={loading}
+                        disabled={loading} // Use realtime hook loading
                     >
                         Voltar
                     </button>

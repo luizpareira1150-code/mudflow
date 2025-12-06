@@ -1,3 +1,4 @@
+
 import { z } from 'zod';
 
 // ==========================================
@@ -55,7 +56,7 @@ export const AppointmentSchema = z.object({
     .regex(/^\d{2}:\d{2}$/, 'Horário inválido (use formato HH:MM)'),
   
   status: z.enum(
-    ['EM_CONTATO', 'AGENDADO', 'ATENDIDO', 'NAO_VEIO', 'BLOQUEADO'],
+    ['EM_CONTATO', 'AGENDADO', 'ATENDIDO', 'NAO_VEIO', 'BLOQUEADO', 'ATENDIMENTO_HUMANO'],
     { errorMap: () => ({ message: 'Status inválido' }) }
   ),
   
@@ -75,39 +76,86 @@ export const AppointmentUpdateSchema = AppointmentSchema.partial().extend({
   id: z.string().min(1, 'ID é obrigatório')
 });
 
-// 4. Schema de Webhook do N8N
-export const N8NWebhookSchema = z.object({
-  action: z.enum([
-    'CREATE_APPOINTMENT', 
-    'UPDATE_STATUS', 
-    'BLOCK_SCHEDULE', 
-    'CREATE_PATIENT_CONTACT',
-    'GET_SLOT_SUGGESTIONS' // Nova ação para IA consumir inteligência
-  ]),
+// 4. Schemas de Webhook do N8N (Discriminated Unions)
+
+// Base fields required for all requests
+const WebhookBase = z.object({
   authToken: z.string().min(1, 'Token de autenticação obrigatório'),
   clinicId: z.string().min(1, 'Clinic ID obrigatório'),
-  
+});
+
+// Action-Specific Data Schemas
+const CreateAppointmentData = z.object({
+  action: z.literal('CREATE_APPOINTMENT'),
   data: z.object({
-    patientName: z.string().min(3).optional(),
-    patientPhone: z.string().regex(/^\d{10,11}$/, 'Telefone inválido').optional(),
-    patientCPF: z.string().regex(/^\d{11}$/, 'CPF inválido').optional(),
-    
-    doctorId: z.string().optional(),
-    date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Data inválida').optional(),
-    time: z.string().regex(/^\d{2}:\d{2}$/, 'Hora inválida').optional(),
+    doctorId: z.string().min(1, 'ID do médico obrigatório'),
+    date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Data inválida (YYYY-MM-DD)'),
+    time: z.string().regex(/^\d{2}:\d{2}$/, 'Hora inválida (HH:MM)'),
+    patientName: z.string().optional(),
+    patientPhone: z.string().optional(),
+    patientCPF: z.string().optional(),
     procedure: z.string().optional(),
-    notes: z.string().optional(),
-    
-    appointmentId: z.string().optional(),
-    newStatus: z.enum(['EM_CONTATO', 'AGENDADO', 'ATENDIDO', 'NAO_VEIO', 'BLOQUEADO']).optional(),
-    
-    startHour: z.string().optional(),
-    endHour: z.string().optional(),
-    
-    source: z.string().optional(),
+    notes: z.string().optional()
+  })
+});
+
+const UpdateStatusData = z.object({
+  action: z.literal('UPDATE_STATUS'),
+  data: z.object({
+    appointmentId: z.string().min(1, 'ID do agendamento obrigatório'),
+    newStatus: z.enum(['EM_CONTATO', 'AGENDADO', 'ATENDIDO', 'NAO_VEIO', 'BLOQUEADO', 'ATENDIMENTO_HUMANO'])
+  })
+});
+
+const BlockScheduleData = z.object({
+  action: z.literal('BLOCK_SCHEDULE'),
+  data: z.object({
+    doctorId: z.string().min(1, 'ID do médico obrigatório'),
+    date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Data inválida'),
+    startHour: z.string().regex(/^\d{2}:\d{2}$/, 'Hora de início inválida'),
+    endHour: z.string().regex(/^\d{2}:\d{2}$/, 'Hora de fim inválida'),
+    notes: z.string().optional()
+  })
+});
+
+const CreateContactData = z.object({
+  action: z.literal('CREATE_PATIENT_CONTACT'),
+  data: z.object({
+    patientName: z.string().min(1, 'Nome obrigatório'),
+    patientPhone: z.string().min(8, 'Telefone obrigatório'),
+    doctorId: z.string().min(1, 'ID do médico obrigatório'),
     message: z.string().optional()
   })
 });
+
+const GetSuggestionsData = z.object({
+  action: z.literal('GET_SLOT_SUGGESTIONS'),
+  data: z.object({
+    patientPhone: z.string().min(8, 'Telefone do paciente obrigatório'),
+    doctorId: z.string().min(1, 'ID do médico obrigatório')
+  })
+});
+
+const HumanHandoverData = z.object({
+  action: z.enum(['MOVE_TO_HUMAN_ATTENDANCE', 'DETECT_HUMAN_INTERVENTION']),
+  data: z.object({
+    appointmentId: z.string().min(1, 'ID do agendamento obrigatório'),
+    patientName: z.string().optional(),
+    patientPhone: z.string().optional()
+  })
+});
+
+// The Discriminated Union
+export const N8NWebhookSchema = WebhookBase.and(
+  z.discriminatedUnion('action', [
+    CreateAppointmentData,
+    UpdateStatusData,
+    BlockScheduleData,
+    CreateContactData,
+    GetSuggestionsData,
+    HumanHandoverData
+  ])
+);
 
 // 5. Schema de Configurações de Integração
 export const IntegrationSettingsSchema = z.object({

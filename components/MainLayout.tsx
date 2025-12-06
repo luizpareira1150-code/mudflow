@@ -1,5 +1,4 @@
 
-
 import React, { useState, useEffect } from 'react';
 import { ViewState, UserRole, AccountType } from '../types';
 import Sidebar from './Sidebar';
@@ -13,6 +12,7 @@ import { MetricsDashboard } from './MetricsDashboard';
 import { ActivityLogs } from './ActivityLogs';
 import { useAuth } from '../contexts/AuthContext';
 import { useClinic } from '../contexts/ClinicContext';
+import { HumanHandoverAlert } from './HumanHandoverAlert';
 
 export const MainLayout: React.FC = () => {
   const { user, logout } = useAuth();
@@ -88,6 +88,9 @@ export const MainLayout: React.FC = () => {
 
   return (
     <div className="flex h-screen w-full bg-slate-50 overflow-hidden font-sans">
+      {/* Global Alert System */}
+      <HumanHandoverAlert user={user} />
+
       <Sidebar 
         user={user} 
         activePage={currentView} 

@@ -1,4 +1,6 @@
 
+
+
 import { Appointment, AppointmentStatus, AvailableSlot, AuditAction, AuditSource, UserRole, DayOfWeek } from '../types';
 import { STORAGE_KEYS, getStorage, setStorage, delay, initialAppointments } from './storage';
 import { systemLogService } from './auditService';
@@ -12,6 +14,18 @@ import { validate } from '../utils/validator';
 import { z } from 'zod';
 import { N8NIntegrationService } from './n8nIntegration';
 import { doctorService } from './doctorService';
+import { monitoringService } from './monitoring';
+import { getDayOfWeekBR } from '../utils/dateUtils';
+import { agendaReleaseService } from './agendaReleaseService';
+import { socketServer, SocketEvent } from '../lib/socketServer'; // Import WebSocket
+
+// Helper to avoid circular dependency
+const getCurrentUserId = () => {
+    try {
+        const stored = localStorage.getItem(STORAGE_KEYS.CURRENT_USER);
+        return stored ? JSON.parse(stored).id : 'system';
+    } catch { return 'system'; }
+};
 
 // Helper to construct Rich Context and Trigger Webhook
 // This is decoupled from the main thread to avoid blocking UI response
@@ -51,7 +65,7 @@ const triggerRichWebhook = async (
                     } : undefined,
                     evolution: {
                         instanceName: settings.evolutionInstanceName,
-                        apiKey: settings.evolutionApiKey // Facilitates N8N config
+                        // apiKey removed to match type definition in N8NIntegrationService
                     },
                     system: {
                         timestamp: new Date().toISOString(),
@@ -62,8 +76,8 @@ const triggerRichWebhook = async (
             }, settings);
         }
     } catch (e) {
-        console.error('[N8N] Failed to trigger rich webhook', e);
-        // We log the failure but do NOT throw, to prevent breaking the UI flow
+        // Log failure but do not crash
+        monitoringService.trackError(e as Error, { context: 'TriggerRichWebhook', appointmentId: appointment.id });
     }
 };
 
@@ -71,11 +85,18 @@ export const appointmentService = {
   getAvailableSlots: async (clinicId: string, doctorId: string, date: string): Promise<AvailableSlot[]> => {
       await delay(300);
       
+      // 1. Availability Check (Schedule & Absences)
       const validation = await doctorAvailabilityService.validateAvailability(doctorId, clinicId, date);
 
       if (!validation.isAvailable) {
-          console.warn(`[AVAILABILITY] ${validation.reason}`);
           return [];
+      }
+
+      // 2. Agenda Release Rule Check (New)
+      const releaseCheck = await agendaReleaseService.isDateReleased(doctorId, clinicId, date);
+      if (!releaseCheck.released) {
+          // console.warn(`[RELEASE] ${releaseCheck.reason}`);
+          return []; // Agenda ainda não foi liberada
       }
 
       const [legacyConfig, availability] = await Promise.all([
@@ -87,9 +108,7 @@ export const appointmentService = {
       const doctorAppts = allAppts.filter(a => a.clinicId === clinicId && a.doctorId === doctorId && a.date === date && a.status !== AppointmentStatus.NAO_VEIO);
       
       const slots: AvailableSlot[] = [];
-      const [year, month, day] = date.split('-').map(Number);
-      const dateObj = new Date(year, month - 1, day);
-      const dayOfWeek = dateObj.getDay() as DayOfWeek; 
+      const dayOfWeek = getDayOfWeekBR(date) as DayOfWeek; 
 
       let startH, startM, endH, endM, interval;
       const dayConfig = availability?.weekSchedule[dayOfWeek];
@@ -110,6 +129,7 @@ export const appointmentService = {
       while (current < end) {
         const timeStr = current.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
         
+        // We reuse validateAvailability logic for specific time (handles lunch breaks if we add them later)
         const timeValidation = await doctorAvailabilityService.validateAvailability(doctorId, clinicId, date, timeStr);
         
         if (timeValidation.isAvailable) {
@@ -151,100 +171,129 @@ export const appointmentService = {
   },
   
   createAppointment: async (appt: Omit<Appointment, 'id' | 'patient'>, source: AuditSource = AuditSource.WEB_APP, reservationId?: string): Promise<Appointment> => {
-    await delay(300);
-    const validatedAppt = validate(AppointmentSchema, appt) as z.infer<typeof AppointmentSchema>;
-    
-    const availabilityCheck = await doctorAvailabilityService.validateAvailability(
-        validatedAppt.doctorId, 
-        validatedAppt.clinicId, 
-        validatedAppt.date, 
-        validatedAppt.time
-    );
+    const startTime = performance.now();
+    try {
+        await delay(300);
+        const validatedAppt = validate(AppointmentSchema, appt) as z.infer<typeof AppointmentSchema>;
+        
+        // 1. Availability Check
+        const availabilityCheck = await doctorAvailabilityService.validateAvailability(
+            validatedAppt.doctorId, 
+            validatedAppt.clinicId, 
+            validatedAppt.date, 
+            validatedAppt.time
+        );
 
-    if (!availabilityCheck.isAvailable) {
-        throw new Error(`Indisponível: ${availabilityCheck.reason}`);
-    }
+        if (!availabilityCheck.isAvailable) {
+            throw new Error(`Indisponível: ${availabilityCheck.reason}`);
+        }
 
-    const appts = getStorage<Appointment[]>(STORAGE_KEYS.APPOINTMENTS, initialAppointments);
-    
-    const conflictCheck = appts.some(a => 
-      a.clinicId === validatedAppt.clinicId && 
-      a.doctorId === validatedAppt.doctorId && 
-      a.date === validatedAppt.date && 
-      a.time === validatedAppt.time && 
-      a.status !== AppointmentStatus.NAO_VEIO
-    );
-    
-    if (conflictCheck) {
-      await systemLogService.createLog({
-        organizationId: validatedAppt.clinicId,
+        // 2. Release Rule Check
+        const releaseCheck = await agendaReleaseService.isDateReleased(validatedAppt.doctorId, validatedAppt.clinicId, validatedAppt.date);
+        if (!releaseCheck.released) {
+            throw new Error(`Agenda bloqueada: ${releaseCheck.reason}`);
+        }
+
+        const appts = getStorage<Appointment[]>(STORAGE_KEYS.APPOINTMENTS, initialAppointments);
+        
+        const conflictCheck = appts.some(a => 
+        a.clinicId === validatedAppt.clinicId && 
+        a.doctorId === validatedAppt.doctorId && 
+        a.date === validatedAppt.date && 
+        a.time === validatedAppt.time && 
+        a.status !== AppointmentStatus.NAO_VEIO
+        );
+        
+        if (conflictCheck) {
+            await systemLogService.createLog({
+                organizationId: validatedAppt.clinicId,
+                source: source,
+                action: AuditAction.APPOINTMENT_CREATED,
+                entityType: 'Appointment',
+                entityId: 'conflict',
+                entityName: 'CONFLICT DETECTED',
+                description: `Conflito: ${validatedAppt.date} ${validatedAppt.time}`,
+                metadata: { conflictReason: 'double_check_failed', source, doctorId: validatedAppt.doctorId }
+            });
+            throw new Error("CONFLICT_DETECTED:Horário já ocupado. Escolha outro horário.");
+        }
+        
+        const patient = await patientService.getPatientById(validatedAppt.patientId);
+        if (!patient) throw new Error("Paciente não encontrado.");
+        
+        const newAppt: Appointment = { 
+        ...validatedAppt, 
+        id: Math.random().toString(36).substr(2, 5),
+        createdAt: new Date().toISOString()
+        };
+        
+        appts.push(newAppt);
+        setStorage(STORAGE_KEYS.APPOINTMENTS, appts);
+        
+        if (reservationId) {
+        await slotReservationService.confirmReservation(reservationId);
+        }
+
+        const actionType = newAppt.status === AppointmentStatus.EM_CONTATO 
+        ? AuditAction.CONTACT_CREATED 
+        : AuditAction.APPOINTMENT_CREATED;
+        
+        const description = actionType === AuditAction.CONTACT_CREATED
+        ? `Lead/Contato CRM: ${patient.name}`
+        : `Agendou consulta para ${newAppt.date} às ${newAppt.time}`;
+
+        const createdVia = newAppt.status === AppointmentStatus.EM_CONTATO ? 'contact_flow' : 'direct_booking';
+
+        systemLogService.createLog({
+        organizationId: newAppt.clinicId,
         source: source,
-        action: AuditAction.APPOINTMENT_CREATED,
+        action: actionType,
         entityType: 'Appointment',
-        entityId: 'conflict',
-        entityName: 'CONFLICT DETECTED',
-        description: `Conflito: ${validatedAppt.date} ${validatedAppt.time}`,
-        metadata: { conflictReason: 'double_check_failed', source, doctorId: validatedAppt.doctorId }
-      });
-      throw new Error("CONFLICT_DETECTED:Horário já ocupado. Escolha outro horário.");
-    }
-    
-    const patient = await patientService.getPatientById(validatedAppt.patientId);
-    if (!patient) throw new Error("Paciente não encontrado.");
-    
-    const newAppt: Appointment = { 
-      ...validatedAppt, 
-      id: Math.random().toString(36).substr(2, 5),
-      createdAt: new Date().toISOString()
-    };
-    
-    appts.push(newAppt);
-    setStorage(STORAGE_KEYS.APPOINTMENTS, appts);
-    
-    if (reservationId) {
-      await slotReservationService.confirmReservation(reservationId);
-    }
-
-    const actionType = newAppt.status === AppointmentStatus.EM_CONTATO 
-      ? AuditAction.CONTACT_CREATED 
-      : AuditAction.APPOINTMENT_CREATED;
-    
-    const description = actionType === AuditAction.CONTACT_CREATED
-      ? `Lead/Contato CRM: ${patient.name}`
-      : `Agendou consulta para ${newAppt.date} às ${newAppt.time}`;
-
-    const createdVia = newAppt.status === AppointmentStatus.EM_CONTATO ? 'contact_flow' : 'direct_booking';
-
-    systemLogService.createLog({
-      organizationId: newAppt.clinicId,
-      source: source,
-      action: actionType,
-      entityType: 'Appointment',
-      entityId: newAppt.id,
-      entityName: patient.name,
-      description,
-      newValues: newAppt,
-      metadata: { createdVia, hadReservation: !!reservationId }
-    });
-
-    if (source === AuditSource.N8N_WEBHOOK && actionType === AuditAction.APPOINTMENT_CREATED) {
-        notificationService.notify({
-            title: 'Novo Agendamento (Bot)',
-            message: `${patient.name} agendou para ${newAppt.date} às ${newAppt.time}.`,
-            type: 'info',
-            clinicId: newAppt.clinicId,
-            targetRole: [UserRole.SECRETARY],
-            priority: 'medium',
-            actionLink: 'view:Agenda',
-            metadata: { appointmentId: newAppt.id }
+        entityId: newAppt.id,
+        entityName: patient.name,
+        description,
+        newValues: newAppt,
+        metadata: { createdVia, hadReservation: !!reservationId }
         });
-    } else if (source === AuditSource.WEB_APP && actionType === AuditAction.APPOINTMENT_CREATED) {
-        // TRIGGER OUTBOUND WEBHOOK (Async)
-        // Fire and forget, don't await blocking the UI
-        triggerRichWebhook('APPOINTMENT_CREATED', newAppt, patient.name, patient.phone);
+
+        // ✅ WEBSOCKET EMIT
+        socketServer.emit(
+            SocketEvent.APPOINTMENT_CREATED,
+            { ...newAppt, patient }, // Send with patient data for convenience
+            newAppt.clinicId,
+            getCurrentUserId()
+        );
+
+        if (source === AuditSource.N8N_WEBHOOK && actionType === AuditAction.APPOINTMENT_CREATED) {
+            notificationService.notify({
+                title: 'Novo Agendamento (Bot)',
+                message: `${patient.name} agendou para ${newAppt.date} às ${newAppt.time}.`,
+                type: 'info',
+                clinicId: newAppt.clinicId,
+                targetRole: [UserRole.SECRETARY],
+                priority: 'medium',
+                actionLink: 'view:Agenda',
+                metadata: { appointmentId: newAppt.id }
+            });
+        } else if (source === AuditSource.WEB_APP && actionType === AuditAction.APPOINTMENT_CREATED) {
+            triggerRichWebhook('APPOINTMENT_CREATED', newAppt, patient.name, patient.phone);
+        }
+        
+        // MONITORING: Latency Tracking
+        const duration = performance.now() - startTime;
+        monitoringService.trackMetric('appointment_creation_latency', duration, { source });
+        
+        return newAppt;
+
+    } catch (error) {
+        // MONITORING: Error Tracking
+        monitoringService.trackError(error as Error, { 
+            action: 'create_appointment', 
+            clinicId: appt.clinicId, 
+            source 
+        });
+        throw error;
     }
-    
-    return newAppt;
   },
   
   updateAppointmentStatus: async (id: string, newStatus: AppointmentStatus, source: AuditSource = AuditSource.WEB_APP): Promise<Appointment> => {
@@ -275,6 +324,19 @@ export const appointmentService = {
         description: `Alterou status para ${newStatus}`,
         metadata: { oldStatus, newStatus }
       });
+
+      // ✅ WEBSOCKET EMIT
+      socketServer.emit(
+        SocketEvent.APPOINTMENT_STATUS_CHANGED,
+        { 
+            id, 
+            oldStatus, 
+            newStatus, 
+            appointment: { ...appts[index], patient }
+        },
+        appts[index].clinicId,
+        getCurrentUserId()
+      );
       
       if (source === AuditSource.N8N_WEBHOOK && (newStatus === AppointmentStatus.NAO_VEIO || newStatus === AppointmentStatus.BLOQUEADO)) {
            notificationService.notify({
@@ -287,9 +349,6 @@ export const appointmentService = {
                metadata: { appointmentId: id }
            });
       } else if (source === AuditSource.WEB_APP && patient) {
-           // TRIGGER OUTBOUND WEBHOOK (Async) for important status changes
-           // Useful for: Patient arrived (ATENDIDO), send Google Review link
-           // Useful for: Patient missed (NAO_VEIO), send recovery message
            triggerRichWebhook('STATUS_CHANGED', appts[index], patient.name, patient.phone);
       }
 
@@ -318,6 +377,14 @@ export const appointmentService = {
         source: AuditSource.WEB_APP
       });
 
+      // ✅ WEBSOCKET EMIT
+      socketServer.emit(
+        SocketEvent.APPOINTMENT_UPDATED,
+        updated,
+        updated.clinicId,
+        getCurrentUserId()
+      );
+
       return appts[index];
   },
   
@@ -341,6 +408,14 @@ export const appointmentService = {
         description: `Cancelou agendamento: ${reason}`,
         metadata: { reason, appointmentDate: appt.date, appointmentTime: appt.time }
       });
+
+      // ✅ WEBSOCKET EMIT
+      socketServer.emit(
+        SocketEvent.APPOINTMENT_DELETED,
+        { id, appointment: appt },
+        appt.clinicId,
+        getCurrentUserId()
+      );
 
       notificationService.notify({
         title: 'Paciente Cancelou',
@@ -374,6 +449,14 @@ export const appointmentService = {
         description: `Bloqueou ${newAppts.length} horários em lote`,
         metadata: { count: newAppts.length, date: appointments[0].date }
       });
+
+      // ✅ WEBSOCKET EMIT (Send first one to trigger refresh on relevant day)
+      socketServer.emit(
+        SocketEvent.APPOINTMENT_CREATED,
+        newAppts[0], // Sufficient to trigger refresh for the day
+        appointments[0].clinicId,
+        getCurrentUserId()
+      );
   },
   
   subscribeToAppointments: (clinicId: string, date: string, doctorId: string, callback: (data: Appointment[]) => void) => {
@@ -381,8 +464,20 @@ export const appointmentService = {
           const data = await appointmentService.getAppointments(clinicId, date, doctorId);
           callback(data);
       };
-      fetch();
-      const interval = setInterval(fetch, 5000);
-      return () => clearInterval(interval);
+      
+      // ✅ NEW: USE WEBSOCKET INSTEAD OF INTERVAL
+      fetch(); // Initial fetch
+      
+      const unsubscribe = socketServer.on(SocketEvent.APPOINTMENT_CREATED, fetch);
+      const unsubscribe2 = socketServer.on(SocketEvent.APPOINTMENT_UPDATED, fetch);
+      const unsubscribe3 = socketServer.on(SocketEvent.APPOINTMENT_DELETED, fetch);
+      const unsubscribe4 = socketServer.on(SocketEvent.APPOINTMENT_STATUS_CHANGED, fetch);
+
+      return () => {
+          unsubscribe();
+          unsubscribe2();
+          unsubscribe3();
+          unsubscribe4();
+      };
   }
 };

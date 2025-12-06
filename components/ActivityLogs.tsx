@@ -5,21 +5,21 @@ import { systemLogService } from '../services/mockSupabase';
 import { 
   Search, Filter, FileText, User as UserIcon, Calendar, 
   Clock, ChevronDown, Activity, Globe, Bot, Server, 
-  MessageSquare, AlertTriangle, Download, AlertCircle, X, Check
+  MessageSquare, AlertTriangle, Download, AlertCircle, X
 } from 'lucide-react';
 import { LogDetailsModal } from './LogDetailsModal';
+import { formatDateTimeBR } from '../utils/dateUtils';
 
 interface ActivityLogsProps {
   user: User;
 }
 
 export const ActivityLogs: React.FC<ActivityLogsProps> = ({ user }) => {
-  // Data State
   const [logs, setLogs] = useState<AuditLog[]>([]);
   const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState({ totalLogs: 0, todayCount: 0, errorCount: 0, mostActiveUser: null as any });
+  const [totalRecords, setTotalRecords] = useState(0);
   
-  // Unified Filter State
   const [filters, setFilters] = useState({
     searchTerm: '',
     action: '' as string,
@@ -28,27 +28,31 @@ export const ActivityLogs: React.FC<ActivityLogsProps> = ({ user }) => {
     endDate: ''
   });
 
-  // Pagination State
+  // Server-side pagination emulation
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 15;
 
-  // Modal State
   const [selectedLog, setSelectedLog] = useState<AuditLog | null>(null);
   const [isDetailsOpen, setIsDetailsOpen] = useState(false);
 
-  // Initial Load & Filter Change
   useEffect(() => {
     const fetchLogs = async () => {
       setLoading(true);
       try {
-        const [logsData, statsData] = await Promise.all([
-            // Passa os filtros diretamente para o serviço (Backend Simulation)
-            systemLogService.getLogs(user.clinicId, filters),
+        const offset = (currentPage - 1) * itemsPerPage;
+        
+        const [logsResponse, statsData] = await Promise.all([
+            systemLogService.getLogs(user.clinicId, {
+                ...filters,
+                limit: itemsPerPage,
+                offset
+            }),
             systemLogService.getAuditStats(user.clinicId)
         ]);
-        setLogs(logsData);
+        
+        setLogs(logsResponse.logs);
+        setTotalRecords(logsResponse.total);
         setStats(statsData);
-        setCurrentPage(1); // Reset page on filter change
       } catch (error) {
         console.error("Failed to load audit data", error);
       } finally {
@@ -56,28 +60,19 @@ export const ActivityLogs: React.FC<ActivityLogsProps> = ({ user }) => {
       }
     };
 
-    // Debounce para busca textual
     const timeoutId = setTimeout(() => {
         fetchLogs();
     }, 400);
 
     return () => clearTimeout(timeoutId);
-  }, [user.clinicId, filters]);
+  }, [user.clinicId, filters, currentPage]); // Re-fetch on page change
 
-  // Client-side pagination (Backend pagination seria o próximo passo ideal)
-  const totalPages = Math.ceil(logs.length / itemsPerPage);
-  const currentLogs = logs.slice(
-    (currentPage - 1) * itemsPerPage,
-    currentPage * itemsPerPage
-  );
+  // Reset page when filters change
+  useEffect(() => {
+      setCurrentPage(1);
+  }, [filters]);
 
-  const formatDate = (isoString: string) => {
-    const date = new Date(isoString);
-    return new Intl.DateTimeFormat('pt-BR', { 
-      day: '2-digit', month: '2-digit', year: '2-digit',
-      hour: '2-digit', minute: '2-digit'
-    }).format(date);
-  };
+  const totalPages = Math.ceil(totalRecords / itemsPerPage);
 
   const getSourceIcon = (source: AuditSource) => {
     switch (source) {
@@ -201,7 +196,6 @@ export const ActivityLogs: React.FC<ActivityLogsProps> = ({ user }) => {
 
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
           
-          {/* Data Inicial */}
           <div>
             <label className="block text-xs font-bold text-gray-500 mb-1">Data Inicial</label>
             <input 
@@ -212,7 +206,6 @@ export const ActivityLogs: React.FC<ActivityLogsProps> = ({ user }) => {
             />
           </div>
 
-          {/* Data Final */}
           <div>
             <label className="block text-xs font-bold text-gray-500 mb-1">Data Final</label>
             <input 
@@ -223,7 +216,6 @@ export const ActivityLogs: React.FC<ActivityLogsProps> = ({ user }) => {
             />
           </div>
           
-          {/* Tipo de Ação */}
           <div>
             <label className="block text-xs font-bold text-gray-500 mb-1">Tipo de Ação</label>
             <div className="relative">
@@ -248,7 +240,6 @@ export const ActivityLogs: React.FC<ActivityLogsProps> = ({ user }) => {
             </div>
           </div>
           
-          {/* Origem */}
           <div>
             <label className="block text-xs font-bold text-gray-500 mb-1">Origem</label>
             <div className="relative">
@@ -268,7 +259,6 @@ export const ActivityLogs: React.FC<ActivityLogsProps> = ({ user }) => {
           </div>
         </div>
 
-        {/* Busca por Texto */}
         <div className="mt-4">
           <div className="relative">
             <Search size={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
@@ -283,10 +273,9 @@ export const ActivityLogs: React.FC<ActivityLogsProps> = ({ user }) => {
         </div>
       </div>
 
-      {/* AÇÕES */}
       <div className="flex justify-between items-center mb-4">
         <p className="text-sm text-gray-500">
-          Mostrando <strong>{currentLogs.length}</strong> de <strong>{logs.length}</strong> registros encontrados
+          Mostrando <strong>{logs.length}</strong> de <strong>{totalRecords}</strong> registros
         </p>
         <button 
           onClick={exportLogs}
@@ -297,7 +286,6 @@ export const ActivityLogs: React.FC<ActivityLogsProps> = ({ user }) => {
         </button>
       </div>
 
-      {/* LISTA DE LOGS */}
       <div className="flex-1 bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden flex flex-col">
         <div className="overflow-y-auto flex-1">
           {loading ? (
@@ -307,16 +295,16 @@ export const ActivityLogs: React.FC<ActivityLogsProps> = ({ user }) => {
                 <p className="text-gray-400 text-sm">Carregando logs...</p>
               </div>
             </div>
-          ) : currentLogs.length === 0 ? (
+          ) : logs.length === 0 ? (
             <div className="flex items-center justify-center h-64">
               <div className="text-center">
                 <AlertCircle size={48} className="mx-auto text-gray-300 mb-4" />
-                <p className="text-gray-400">Nenhum log encontrado com os filtros aplicados</p>
+                <p className="text-gray-400">Nenhum log encontrado</p>
               </div>
             </div>
           ) : (
             <div className="divide-y divide-gray-100">
-              {currentLogs.map((log) => (
+              {logs.map((log) => (
                 <div 
                   key={log.id}
                   onClick={() => {
@@ -326,12 +314,10 @@ export const ActivityLogs: React.FC<ActivityLogsProps> = ({ user }) => {
                   className="p-4 hover:bg-gray-50 transition-colors cursor-pointer group"
                 >
                   <div className="flex items-start gap-4">
-                    {/* Ícone da Ação */}
                     <div className={`p-2 rounded-lg ${getActionColor(log.action)} border`}>
                       {getActionIcon(log.action)}
                     </div>
                     
-                    {/* Conteúdo */}
                     <div className="flex-1 min-w-0">
                       <div className="flex items-start justify-between mb-1">
                         <p className="font-medium text-gray-800 group-hover:text-blue-600 transition-colors">
@@ -343,7 +329,7 @@ export const ActivityLogs: React.FC<ActivityLogsProps> = ({ user }) => {
                       <div className="flex items-center gap-3 text-xs text-gray-500">
                         <span className="flex items-center gap-1">
                           <Clock size={12} />
-                          {formatDate(log.timestamp)}
+                          {formatDateTimeBR(log.timestamp)}
                         </span>
                         {log.userName && (
                           <>
@@ -354,10 +340,6 @@ export const ActivityLogs: React.FC<ActivityLogsProps> = ({ user }) => {
                             </span>
                           </>
                         )}
-                        <span>•</span>
-                        <span className="font-mono text-gray-400">
-                          {log.entityType}:{log.entityId.slice(0, 8)}
-                        </span>
                       </div>
                     </div>
                   </div>
@@ -367,7 +349,7 @@ export const ActivityLogs: React.FC<ActivityLogsProps> = ({ user }) => {
           )}
         </div>
         
-        {/* PAGINAÇÃO */}
+        {/* Pagination Controls */}
         {totalPages > 1 && (
           <div className="border-t border-gray-200 p-4 flex items-center justify-between bg-gray-50">
             <button 
@@ -393,7 +375,6 @@ export const ActivityLogs: React.FC<ActivityLogsProps> = ({ user }) => {
         )}
       </div>
 
-      {/* MODAL DE DETALHES */}
       {isDetailsOpen && selectedLog && (
         <LogDetailsModal 
           log={selectedLog}

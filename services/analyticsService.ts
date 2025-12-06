@@ -1,25 +1,20 @@
 
-import { DashboardMetrics, AppointmentStatus, GlobalMetrics, ClientHealthMetrics, OwnerAlert, AccountType } from '../types';
+import { DashboardMetrics, AppointmentStatus, GlobalMetrics, ClientHealthMetrics, OwnerAlert, AccountType, Organization } from '../types';
 import { appointmentService } from './appointmentService';
 import { doctorService } from './doctorService';
-import { delay } from './storage';
+import { delay, getStorage, STORAGE_KEYS, initialOrganizations, initialAppointments, initialSettings } from './storage';
 
 export const analyticsService = {
   getClinicMetrics: async (clinicId: string, startDate?: string, endDate?: string): Promise<DashboardMetrics> => {
     await delay(300);
     
-    // We fetch all appointments because mock service doesn't support advanced filtering yet
     const now = new Date();
-    const allAppts = await appointmentService.getAppointments(clinicId, now.toISOString().split('T')[0]); 
+    // Fetch directly from storage to ensure we have all data
+    const allAppts = getStorage(STORAGE_KEYS.APPOINTMENTS, initialAppointments);
     const doctors = await doctorService.getDoctors(clinicId);
     
-    // Simulating aggregation from "Database"
-    const storageKey = 'medflow_appointments';
-    const stored = localStorage.getItem(storageKey);
-    let rawAppts: any[] = stored ? JSON.parse(stored) : [];
-    
     // Filter by clinic
-    rawAppts = rawAppts.filter(a => a.clinicId === clinicId);
+    let rawAppts = allAppts.filter(a => a.clinicId === clinicId);
 
     // Filter by Date Range if provided
     if (startDate && endDate) {
@@ -37,7 +32,7 @@ export const analyticsService = {
     const appointmentsThisMonth = rawAppts.filter(a => a.date >= firstDayThisMonth && a.date <= lastDayThisMonth).length;
     const appointmentsLastMonth = rawAppts.filter(a => a.date >= firstDayLastMonth && a.date <= lastDayLastMonth).length;
 
-    // 2. General Status Breakdown (All Sources)
+    // 2. General Status Breakdown
     const statusBreakdown = {
         EM_CONTATO: rawAppts.filter(a => a.status === AppointmentStatus.EM_CONTATO).length,
         AGENDADO: rawAppts.filter(a => a.status === AppointmentStatus.AGENDADO).length,
@@ -46,7 +41,7 @@ export const analyticsService = {
         BLOQUEADO: rawAppts.filter(a => a.status === AppointmentStatus.BLOQUEADO).length,
     };
 
-    const totalCancelled = Math.floor(appointmentsThisMonth * 0.05); // Mock 5% cancellation
+    const totalCancelled = 0; // In a real app we'd track cancellations in a separate table or log
 
     const totalScheduled = statusBreakdown.AGENDADO + statusBreakdown.ATENDIDO + statusBreakdown.NAO_VEIO;
     const totalAttended = statusBreakdown.ATENDIDO;
@@ -56,10 +51,11 @@ export const analyticsService = {
     const noShowRate = totalScheduled > 0 ? (totalNoShow / totalScheduled) * 100 : 0;
 
     // --- AUTOMATION SPECIFIC CALCULATIONS ---
-    const automatedSubsetSize = Math.floor(totalScheduled * 0.45); 
-    const interactions = Math.floor(automatedSubsetSize * 1.5); // Leads
-    const scheduledAuto = automatedSubsetSize;
-    const attendedAuto = Math.floor(scheduledAuto * 0.85); // 85% attendance on automated
+    // Simulação baseada nos dados reais: Consideramos "EM_CONTATO" e agendamentos criados via N8N
+    // Como não temos flag explícita "via_automation" em todos os legados, vamos estimar ou usar metadados se disponíveis
+    const interactions = statusBreakdown.EM_CONTATO + totalScheduled; 
+    const scheduledAuto = totalScheduled; // Assume sistema é usado primariamente para isso
+    const attendedAuto = totalAttended;
     
     const minutesSaved = scheduledAuto * 10;
     const hoursSaved = Math.floor(minutesSaved / 60);
@@ -143,77 +139,90 @@ export const analyticsService = {
 
   getOwnerDashboardMetrics: async (): Promise<{ global: GlobalMetrics, clients: ClientHealthMetrics[], alerts: OwnerAlert[] }> => {
     await delay(300);
-    // Mock Data for Owner Dashboard
-    // In a real app, this would iterate over all clinics/tenants
+    
+    // --- REAL DATA AGGREGATION ---
+    const orgs = getStorage(STORAGE_KEYS.ORGS, initialOrganizations);
+    const allAppts = getStorage(STORAGE_KEYS.APPOINTMENTS, initialAppointments);
+    const settings = getStorage(STORAGE_KEYS.CLINIC_SETTINGS, initialSettings);
+
+    const now = new Date();
+    const firstDayThisMonth = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0];
+    const lastDayThisMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().split('T')[0];
+
+    const totalApptsThisMonth = allAppts.filter(a => a.date >= firstDayThisMonth && a.date <= lastDayThisMonth).length;
+
+    // Calculate MRR (Based on actual subscription value)
+    let mrr = 0;
+    
+    const clientMetrics: ClientHealthMetrics[] = orgs.map(org => {
+        const orgAppts = allAppts.filter(a => a.clinicId === org.id);
+        const orgSettings = settings.find(s => s.clinicId === org.id);
+        
+        // MRR Calculation: Use the stored value or fallback to estimate
+        const orgValue = org.subscriptionValue !== undefined ? org.subscriptionValue : (org.accountType === AccountType.CLINICA ? 400 : 150);
+        mrr += orgValue;
+
+        // Metrics
+        const monthAppts = orgAppts.filter(a => a.date >= firstDayThisMonth && a.date <= lastDayThisMonth);
+        const totalScheduled = monthAppts.length; // Simplified for dashboard list
+        const totalAttended = monthAppts.filter(a => a.status === AppointmentStatus.ATENDIDO).length;
+        const totalNoShow = monthAppts.filter(a => a.status === AppointmentStatus.NAO_VEIO).length;
+        
+        // Health Score Logic
+        let healthScore: 'healthy' | 'attention' | 'risk' = 'healthy';
+        const occupancyRate = 50; // Mocked occupancy for now as we don't calculate full slots here
+        const noShowRate = totalScheduled > 0 ? (totalNoShow / totalScheduled) * 100 : 0;
+        
+        if (totalScheduled === 0) healthScore = 'risk';
+        else if (noShowRate > 20) healthScore = 'attention';
+
+        return {
+            clientId: org.id,
+            clientName: org.name,
+            accountType: org.accountType,
+            lastUsed: new Date().toISOString(), // In real app, check audit logs
+            appointmentsThisMonth: totalScheduled,
+            automationsActive: !!orgSettings?.n8nWebhookUrl,
+            healthScore,
+            occupancyRate,
+            monthlyScheduled: totalScheduled,
+            growthVsLastMonth: 0, // Needs historical data
+            availableSlots: 100, // Mocked capacity
+            noShowRate,
+            webhookStatus: orgSettings?.n8nWebhookUrl ? 'healthy' : 'error',
+            needsTrafficAnalysis: totalScheduled < 10,
+            weeklyContacts: 0,
+            weeklyScheduled: 0,
+            weeklyAttended: 0,
+            weeklyCancelled: 0,
+            monthlyContacts: 0,
+            monthlyAttended: totalAttended,
+            monthlyCancelled: 0
+        };
+    });
+
+    const alerts: OwnerAlert[] = clientMetrics.filter(c => c.healthScore === 'risk').map(c => ({
+        id: `alert_${c.clientId}`,
+        type: 'critical',
+        clientName: c.clientName,
+        title: 'Baixo Volume / Risco de Churn',
+        message: 'Cliente com zero agendamentos neste mês.',
+        actionType: 'CONTACT_PHONE',
+        actionPayload: c.clientName
+    }));
+
     return {
         global: {
-            activeClients: 12,
-            totalClients: 12,
-            totalAppointmentsThisMonth: 1250,
-            growthRate: 15,
-            automationSuccessRate: 92,
-            totalAutomationsSent: 3400,
-            mrr: 4500
+            activeClients: orgs.length,
+            totalClients: orgs.length,
+            totalAppointmentsThisMonth: totalApptsThisMonth,
+            growthRate: 0, // Needs history
+            automationSuccessRate: 100,
+            totalAutomationsSent: 0,
+            mrr
         },
-        clients: [
-            {
-                clientId: 'org_clinica_001',
-                clientName: 'Clínica Multi-Médicos',
-                accountType: AccountType.CLINICA,
-                lastUsed: new Date().toISOString(),
-                appointmentsThisMonth: 450,
-                automationsActive: true,
-                healthScore: 'healthy',
-                occupancyRate: 85,
-                monthlyScheduled: 450,
-                growthVsLastMonth: 12,
-                availableSlots: 600,
-                noShowRate: 5,
-                webhookStatus: 'healthy',
-                needsTrafficAnalysis: false,
-                weeklyContacts: 120,
-                weeklyScheduled: 90,
-                weeklyAttended: 85,
-                weeklyCancelled: 2,
-                monthlyContacts: 500,
-                monthlyAttended: 420,
-                monthlyCancelled: 15
-            },
-            {
-                clientId: 'org_consultorio_001',
-                clientName: 'Consultório Dr. Solo',
-                accountType: AccountType.CONSULTORIO,
-                lastUsed: new Date(Date.now() - 86400000).toISOString(),
-                appointmentsThisMonth: 120,
-                automationsActive: false,
-                healthScore: 'attention',
-                occupancyRate: 60,
-                monthlyScheduled: 120,
-                growthVsLastMonth: -5,
-                availableSlots: 200,
-                noShowRate: 12,
-                webhookStatus: 'error',
-                needsTrafficAnalysis: true,
-                weeklyContacts: 40,
-                weeklyScheduled: 30,
-                weeklyAttended: 25,
-                weeklyCancelled: 3,
-                monthlyContacts: 150,
-                monthlyAttended: 100,
-                monthlyCancelled: 10
-            }
-        ],
-        alerts: [
-            {
-                id: 'alert_1',
-                type: 'critical',
-                clientName: 'Consultório Dr. Solo',
-                title: 'Webhook Falhando',
-                message: 'Integração N8N retornando 404 há 2 dias.',
-                actionType: 'OPEN_CONFIG',
-                actionPayload: 'org_consultorio_001'
-            }
-        ]
+        clients: clientMetrics,
+        alerts
     };
   }
 };

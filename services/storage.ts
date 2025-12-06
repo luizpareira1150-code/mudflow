@@ -1,5 +1,4 @@
 
-
 import { Organization, User, Doctor, Appointment, Patient, AuditLog, AgendaConfig, ClinicSettings, AccountType, UserRole, AppointmentStatus, AuditSource, AuditAction, PatientStatus, DoctorAvailability, DayOfWeek } from '../types';
 
 // ==========================================
@@ -35,15 +34,15 @@ export const setStorage = <T>(key: string, data: T) => {
 };
 
 // ==========================================
-// INITIAL MOCK DATA
+// INITIAL MOCK DATA (SEED)
 // ==========================================
 
 export const ORG_CLINICA_ID = 'org_clinica_001';
 export const ORG_CONSULTORIO_ID = 'org_consultorio_001';
 
 export const initialOrganizations: Organization[] = [
-  { id: ORG_CLINICA_ID, accountType: AccountType.CLINICA, name: 'Clínica Multi-Médicos', ownerUserId: 'user_med_cli', maxDoctors: 25 },
-  { id: ORG_CONSULTORIO_ID, accountType: AccountType.CONSULTORIO, name: 'Consultório Dr. Solo', ownerUserId: 'user_med_con', maxDoctors: 1 }
+  { id: ORG_CLINICA_ID, accountType: AccountType.CLINICA, name: 'Clínica Multi-Médicos', ownerUserId: 'user_med_cli', maxDoctors: 25, subscriptionValue: 400 },
+  { id: ORG_CONSULTORIO_ID, accountType: AccountType.CONSULTORIO, name: 'Consultório Dr. Solo', ownerUserId: 'user_med_con', maxDoctors: 1, subscriptionValue: 150 }
 ];
 
 export interface StoredUser extends User {
@@ -58,10 +57,10 @@ export const initialUsers: StoredUser[] = [
 ];
 
 export const initialDoctors: Doctor[] = [
-  { id: 'doc_cli_1', organizationId: ORG_CLINICA_ID, name: 'Dr. Diretor (Cardio)', specialty: 'Cardiologia', color: 'blue' },
-  { id: 'doc_cli_2', organizationId: ORG_CLINICA_ID, name: 'Dra. Julia (Derma)', specialty: 'Dermatologia', color: 'purple' },
-  { id: 'doc_cli_3', organizationId: ORG_CLINICA_ID, name: 'Dr. Pedro (Geral)', specialty: 'Clínico Geral', color: 'green' },
-  { id: 'doc_solo_1', organizationId: ORG_CONSULTORIO_ID, name: 'Dr. Roberto Solo', specialty: 'Pediatria', color: 'teal' }
+  { id: 'doc_cli_1', organizationId: ORG_CLINICA_ID, name: 'Dr. Diretor (Cardio)', specialty: 'Cardiologia', crm: '12345-SP', color: 'blue' },
+  { id: 'doc_cli_2', organizationId: ORG_CLINICA_ID, name: 'Dra. Julia (Derma)', specialty: 'Dermatologia', crm: '54321-SP', color: 'purple' },
+  { id: 'doc_cli_3', organizationId: ORG_CLINICA_ID, name: 'Dr. Pedro (Geral)', specialty: 'Clínico Geral', crm: '98765-SP', color: 'green' },
+  { id: 'doc_solo_1', organizationId: ORG_CONSULTORIO_ID, name: 'Dr. Roberto Solo', specialty: 'Pediatria', crm: '11122-MG', color: 'teal' }
 ];
 
 export const initialAgendaConfigs: AgendaConfig[] = [
@@ -112,67 +111,28 @@ export const initialAvailability: DoctorAvailability[] = [
 export const initialSettings: ClinicSettings[] = [
   { 
     clinicId: ORG_CLINICA_ID, 
-    n8nWebhookUrl: 'https://n8n.example.com/webhook-clinica',
+    n8nWebhookUrl: '',
     n8nProductionMode: false,
-    evolutionInstanceName: 'instance_clinica',
-    evolutionApiKey: 'token_clinica',
+    evolutionInstanceName: '',
+    evolutionApiKey: '',
     clinicToken: 'token_legado_clinica',
     apiToken: 'api_token_clinica_123'
   },
   { 
     clinicId: ORG_CONSULTORIO_ID, 
-    n8nWebhookUrl: 'https://n8n.example.com/webhook-consultorio',
+    n8nWebhookUrl: '',
     n8nProductionMode: false,
-    evolutionInstanceName: 'instance_consultorio',
-    evolutionApiKey: 'token_consultorio',
+    evolutionInstanceName: '',
+    evolutionApiKey: '',
     apiToken: 'api_token_consultorio_123'
   }
 ];
 
-export const initialPatients: Patient[] = [
-    {
-        id: 'pat_1',
-        organizationId: ORG_CLINICA_ID,
-        name: 'João da Silva',
-        phone: '11999990001',
-        email: 'joao@email.com',
-        status: PatientStatus.Active,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
-    }
-];
+// DADOS DE PACIENTES VAZIOS PARA INÍCIO LIMPO
+export const initialPatients: Patient[] = [];
 
-export const initialAppointments: Appointment[] = [
-  { 
-    id: 'appt_1', 
-    clinicId: ORG_CLINICA_ID, 
-    doctorId: 'doc_cli_1',
-    slotId: 'slot_1',
-    patientId: 'pat_1', 
-    date: new Date().toISOString().split('T')[0], 
-    time: '09:00', 
-    status: AppointmentStatus.AGENDADO,
-    procedure: 'Consulta Inicial',
-    notes: 'Paciente novo',
-    createdAt: new Date().toISOString()
-  }
-];
+// DADOS DE AGENDAMENTOS VAZIOS PARA INÍCIO LIMPO
+export const initialAppointments: Appointment[] = [];
 
-export const initialLogs: AuditLog[] = [
-  {
-    id: 'log_1',
-    organizationId: ORG_CLINICA_ID,
-    userId: 'user_med_cli',
-    userName: 'Dr. Diretor',
-    source: AuditSource.WEB_APP,
-    action: AuditAction.APPOINTMENT_CREATED,
-    entityType: 'Appointment',
-    entityId: 'appt_1',
-    entityName: 'João da Silva',
-    description: 'Criou agendamento para 09:00',
-    timestamp: new Date(Date.now() - 1000 * 60 * 60 * 2).toISOString(),
-    createdAt: new Date(Date.now() - 1000 * 60 * 60 * 2).toISOString(),
-    newValues: { date: 'Hoje', time: '09:00', procedure: 'Consulta Inicial' },
-    metadata: { createdVia: 'direct_booking' }
-  },
-];
+// LOGS VAZIOS PARA INÍCIO LIMPO
+export const initialLogs: AuditLog[] = [];

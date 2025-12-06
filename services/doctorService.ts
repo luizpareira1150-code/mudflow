@@ -1,8 +1,18 @@
+
 import { Doctor, Organization, User, UserRole, AuditAction, AuditSource } from '../types';
 import { STORAGE_KEYS, getStorage, setStorage, delay, initialDoctors, initialOrganizations, initialUsers, StoredUser } from './storage';
 import { systemLogService } from './auditService';
 import { passwordService } from './passwordService';
 import { notificationService } from './notificationService';
+import { socketServer, SocketEvent } from '../lib/socketServer';
+
+// Helper to avoid circular dependency
+const getCurrentUserId = () => {
+    try {
+        const stored = localStorage.getItem(STORAGE_KEYS.CURRENT_USER);
+        return stored ? JSON.parse(stored).id : 'system';
+    } catch { return 'system'; }
+};
 
 export const doctorService = {
   getOrganizations: async (): Promise<Organization[]> => getStorage<Organization[]>(STORAGE_KEYS.ORGS, initialOrganizations),
@@ -35,7 +45,17 @@ export const doctorService = {
         source: AuditSource.WEB_APP
     });
     
+    // Legacy event
     window.dispatchEvent(new Event('medflow:doctors-updated'));
+
+    // ✅ WEBSOCKET EMIT
+    socketServer.emit(
+        SocketEvent.DOCTOR_CREATED,
+        newDoctor,
+        doctor.organizationId,
+        getCurrentUserId()
+    );
+    
     return newDoctor;
   },
   
@@ -56,6 +76,14 @@ export const doctorService = {
             oldValues: doc as any,
             source: AuditSource.WEB_APP
         });
+
+        // ✅ WEBSOCKET EMIT
+        socketServer.emit(
+            SocketEvent.DOCTOR_DELETED,
+            { id: doctorId, doctor: doc },
+            doc.organizationId,
+            getCurrentUserId()
+        );
       }
       window.dispatchEvent(new Event('medflow:doctors-updated'));
   },
@@ -88,6 +116,21 @@ export const doctorService = {
 
       users.push(newUser);
       setStorage(STORAGE_KEYS.USERS, users);
+
+      // CRITICAL: If creating a new Doctor Admin (Client), we must create the Organization record with the subscription value
+      if (user.role === UserRole.DOCTOR_ADMIN) {
+          const orgs = getStorage<Organization[]>(STORAGE_KEYS.ORGS, initialOrganizations);
+          const newOrg: Organization = {
+              id: user.clinicId,
+              name: user.organizationName || `Clínica ${user.name}`,
+              accountType: user.accountType,
+              ownerUserId: newUser.id,
+              maxDoctors: user.accountType === 'CLINICA' ? 5 : 1,
+              subscriptionValue: user.subscriptionValue || 0
+          };
+          orgs.push(newOrg);
+          setStorage(STORAGE_KEYS.ORGS, orgs);
+      }
       
       systemLogService.createLog({
           organizationId: user.clinicId,
@@ -111,6 +154,15 @@ export const doctorService = {
       }
 
       const { passwordHash, ...safeUser } = newUser;
+
+      // ✅ WEBSOCKET EMIT
+      socketServer.emit(
+        SocketEvent.USER_CREATED,
+        safeUser,
+        user.clinicId,
+        getCurrentUserId()
+      );
+
       return safeUser;
   },
 
@@ -118,6 +170,13 @@ export const doctorService = {
      const users = getStorage<StoredUser[]>(STORAGE_KEYS.USERS, initialUsers);
      const user = users.find(u => u.id === id);
      setStorage(STORAGE_KEYS.USERS, users.filter(u => u.id !== id));
+     
+     // Also remove Organization if user was an owner/client
+     if (user && user.role === UserRole.DOCTOR_ADMIN) {
+         let orgs = getStorage<Organization[]>(STORAGE_KEYS.ORGS, initialOrganizations);
+         orgs = orgs.filter(o => o.id !== user.clinicId);
+         setStorage(STORAGE_KEYS.ORGS, orgs);
+     }
      
      if (user) {
         systemLogService.createLog({
@@ -129,6 +188,14 @@ export const doctorService = {
             description: `Removeu usuário: ${user.name}`,
             source: AuditSource.WEB_APP
         });
+
+        // ✅ WEBSOCKET EMIT
+        socketServer.emit(
+            SocketEvent.USER_DELETED,
+            { id, user },
+            user.clinicId,
+            getCurrentUserId()
+        );
      }
   },
 

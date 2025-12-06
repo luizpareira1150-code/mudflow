@@ -1,7 +1,7 @@
 
-
-import React, { ErrorInfo, ReactNode } from 'react';
+import React, { Component, ErrorInfo, ReactNode } from 'react';
 import { AlertTriangle, RefreshCw, ChevronDown, ChevronRight, Copy, CheckCircle } from 'lucide-react';
+import { monitoringService } from '../services/monitoring';
 
 interface ErrorBoundaryProps {
   children?: ReactNode;
@@ -15,8 +15,8 @@ interface ErrorBoundaryState {
   copied: boolean;
 }
 
-export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoundaryState> {
-  public state: ErrorBoundaryState = {
+export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
+  state: ErrorBoundaryState = {
     hasError: false,
     error: null,
     errorInfo: null,
@@ -24,7 +24,7 @@ export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoun
     copied: false
   };
 
-  static getDerivedStateFromError(error: Error): ErrorBoundaryState {
+  static getDerivedStateFromError(error: Error): Partial<ErrorBoundaryState> {
     return { 
       hasError: true, 
       error, 
@@ -35,7 +35,12 @@ export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoun
   }
 
   componentDidCatch(error: Error, errorInfo: ErrorInfo) {
-    console.error('Uncaught error:', error, errorInfo);
+    // Integrate with Monitoring Service
+    monitoringService.trackError(error, { 
+        componentStack: errorInfo.componentStack,
+        source: 'ErrorBoundary'
+    });
+    
     this.setState({ errorInfo });
   }
 
@@ -66,7 +71,7 @@ export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoun
               </div>
               <h1 className="text-2xl font-bold text-slate-800 text-center">Ops! Algo deu errado.</h1>
               <p className="text-slate-500 text-center mt-2 max-w-xs">
-                Não se preocupe, seus dados estão seguros. Foi apenas uma falha momentânea na interface.
+                Não se preocupe, o erro foi reportado automaticamente. Foi apenas uma falha momentânea.
               </p>
             </div>
 
@@ -90,7 +95,7 @@ export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoun
               {/* Technical Details (Accordion) */}
               <div className="pt-4 border-t border-slate-100 mt-4">
                 <button 
-                  onClick={() => this.setState(prev => ({ isDetailsOpen: !prev.isDetailsOpen }))}
+                  onClick={() => this.setState((prev) => ({ isDetailsOpen: !prev.isDetailsOpen }))}
                   className="flex items-center gap-2 text-xs font-bold text-slate-400 uppercase tracking-wide hover:text-slate-600 transition-colors w-full"
                 >
                   {this.state.isDetailsOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
@@ -122,7 +127,7 @@ export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoun
             
             <div className="bg-slate-50 p-4 text-center border-t border-slate-200">
                 <p className="text-xs text-slate-400">
-                    Se o erro persistir, contate o suporte técnico.
+                    ID do Erro: {Math.random().toString(36).substr(2, 8).toUpperCase()}
                 </p>
             </div>
           </div>

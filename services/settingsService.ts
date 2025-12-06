@@ -1,6 +1,16 @@
+
 import { AgendaConfig, ClinicSettings, AuditAction, AuditSource } from '../types';
 import { STORAGE_KEYS, getStorage, setStorage, delay, initialAgendaConfigs, initialSettings } from './storage';
 import { systemLogService } from './auditService';
+import { socketServer, SocketEvent } from '../lib/socketServer';
+
+// Helper to avoid circular dependency
+const getCurrentUserId = () => {
+    try {
+        const stored = localStorage.getItem(STORAGE_KEYS.CURRENT_USER);
+        return stored ? JSON.parse(stored).id : 'system';
+    } catch { return 'system'; }
+};
 
 export const settingsService = {
   getAgendaConfig: async (clinicId: string, doctorId?: string): Promise<AgendaConfig> => {
@@ -30,6 +40,14 @@ export const settingsService = {
         description: `Atualizou configurações da agenda ${newConfig.doctorId ? '(Médico)' : '(Geral)'}`,
         source: AuditSource.WEB_APP
       });
+
+      // ✅ WEBSOCKET EMIT
+      socketServer.emit(
+        SocketEvent.AGENDA_CONFIG_UPDATED,
+        newConfig,
+        newConfig.clinicId,
+        getCurrentUserId()
+      );
   },
 
   getProcedureOptions: async (clinicId: string, doctorId?: string): Promise<string[]> => {
@@ -67,5 +85,13 @@ export const settingsService = {
         metadata: { productionModeChanged: oldSettings?.n8nProductionMode !== newSettings.n8nProductionMode },
         source: AuditSource.WEB_APP
       });
+
+      // ✅ WEBSOCKET EMIT
+      socketServer.emit(
+        SocketEvent.SETTINGS_UPDATED,
+        newSettings,
+        newSettings.clinicId,
+        getCurrentUserId()
+      );
   },
 };

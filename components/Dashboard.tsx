@@ -1,20 +1,16 @@
 
 import React, { useEffect, useState } from 'react';
-import { MOCK_APPOINTMENTS, MOCK_DOCTORS } from '../constants';
-import { dataService, authService } from '../services/mockSupabase';
-import { Appointment, AppointmentStatus, Doctor } from '../types';
-import { Users, Calendar, ArrowUpRight, Activity, Clock } from 'lucide-react';
+import { dataService, authService, analyticsService } from '../services/mockSupabase';
+import { Appointment, AppointmentStatus, Doctor, DashboardMetrics } from '../types';
+import { Users, Calendar, ArrowUpRight, Activity } from 'lucide-react';
 import { analyzeRecoveryTrend } from '../services/geminiService';
 
 const Dashboard: React.FC = () => {
   const [aiInsight, setAiInsight] = useState<string>("Analisando dados da clínica...");
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [doctors, setDoctors] = useState<Doctor[]>([]);
-  const [stats, setStats] = useState({
-      totalPatients: 0,
-      totalAppointments: 0,
-      attendedCount: 0
-  });
+  const [metrics, setMetrics] = useState<DashboardMetrics | null>(null);
+  const [loading, setLoading] = useState(true);
 
   const currentUser = authService.getCurrentUser();
 
@@ -24,28 +20,30 @@ const Dashboard: React.FC = () => {
     const loadData = async () => {
         if (!currentUser) return;
         
-        // Load Real Data
-        const today = new Date().toISOString().split('T')[0];
-        const allDocs = await dataService.getDoctors(currentUser.clinicId);
-        // For dashboard we might want all appointments, not just today. 
-        // But for "Agenda de Hoje" we use today.
-        // Mocking stats for now based on today's fetch for simplicity + MOCK constants for totals
-        const todaysAppts = await dataService.getAppointments(currentUser.clinicId, today);
-        
-        if (mounted) {
-            setDoctors(allDocs);
-            setAppointments(todaysAppts);
+        try {
+            const today = new Date().toISOString().split('T')[0];
             
-            // Using MOCK constants for broader stats simulation as dataService doesn't have aggregate endpoints yet
-            setStats({
-                totalPatients: 124, // Simulated total
-                totalAppointments: MOCK_APPOINTMENTS.length, 
-                attendedCount: MOCK_APPOINTMENTS.filter(a => a.status === AppointmentStatus.ATENDIDO).length
-            });
+            // Carregar dados reais em paralelo
+            const [allDocs, todaysAppts, clinicMetrics] = await Promise.all([
+                dataService.getDoctors(currentUser.clinicId),
+                dataService.getAppointments(currentUser.clinicId, today),
+                analyticsService.getClinicMetrics(currentUser.clinicId)
+            ]);
             
-            analyzeRecoveryTrend(todaysAppts).then(insight => {
-                if(mounted) setAiInsight(insight);
-            });
+            if (mounted) {
+                setDoctors(allDocs);
+                setAppointments(todaysAppts);
+                setMetrics(clinicMetrics);
+                
+                // Gerar insight com IA
+                analyzeRecoveryTrend(todaysAppts).then(insight => {
+                    if(mounted) setAiInsight(insight);
+                });
+            }
+        } catch (error) {
+            console.error("Erro ao carregar dashboard:", error);
+        } finally {
+            if (mounted) setLoading(false);
         }
     };
     loadData();
@@ -53,10 +51,29 @@ const Dashboard: React.FC = () => {
     return () => { mounted = false; };
   }, [currentUser?.clinicId]);
 
+  // Valores padrão seguros enquanto carrega
   const statCards = [
-    { label: 'Total de Pacientes', value: stats.totalPatients.toString(), icon: Users, change: '+12%', color: 'bg-blue-500' },
-    { label: 'Agendamentos', value: stats.totalAppointments.toString(), icon: Calendar, change: '+5%', color: 'bg-violet-500' },
-    { label: 'Atendimentos', value: stats.attendedCount.toString(), icon: Activity, change: '+2%', color: 'bg-emerald-500' },
+    { 
+        label: 'Agendamentos Mês', 
+        value: metrics?.general.appointmentsThisMonth.toString() || '0', 
+        icon: Calendar, 
+        change: metrics ? `${metrics.general.appointmentsLastMonth > 0 ? (((metrics.general.appointmentsThisMonth - metrics.general.appointmentsLastMonth) / metrics.general.appointmentsLastMonth) * 100).toFixed(0) : 0}%` : '0%', 
+        color: 'bg-blue-500' 
+    },
+    { 
+        label: 'Atendimentos', 
+        value: metrics?.general.totalAttended.toString() || '0', 
+        icon: Activity, 
+        change: `${metrics?.general.attendanceRate.toFixed(0) || 0}% taxa`, 
+        color: 'bg-emerald-500' 
+    },
+    { 
+        label: 'Faltas (No-Show)', 
+        value: metrics?.general.totalNoShow.toString() || '0', 
+        icon: Users, 
+        change: `${metrics?.general.noShowRate.toFixed(0) || 0}% taxa`, 
+        color: 'bg-rose-500' 
+    },
   ];
 
   return (
@@ -78,10 +95,10 @@ const Dashboard: React.FC = () => {
           <div key={stat.label} className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 flex items-center justify-between hover:shadow-md transition-shadow">
             <div>
               <p className="text-sm text-slate-500 font-medium">{stat.label}</p>
-              <h3 className="text-3xl font-bold text-slate-900 mt-1">{stat.value}</h3>
-              <div className="flex items-center gap-1 mt-2 text-emerald-600 text-sm font-medium">
-                <ArrowUpRight size={16} />
-                <span>{stat.change} vs mês anterior</span>
+              <h3 className="text-3xl font-bold text-slate-900 mt-1">{loading ? '-' : stat.value}</h3>
+              <div className="flex items-center gap-1 mt-2 text-slate-600 text-sm font-medium">
+                <ArrowUpRight size={16} className="text-emerald-500" />
+                <span>{stat.change}</span>
               </div>
             </div>
             <div className={`${stat.color} p-4 rounded-xl text-white shadow-lg shadow-opacity-20`}>
@@ -125,7 +142,6 @@ const Dashboard: React.FC = () => {
                         {apt.time}
                     </div>
                     <div className="ml-4 flex-1">
-                        {/* UPDATED: Patient name from joined object */}
                         <h4 className="font-semibold text-slate-900">{apt.patient?.name || 'Paciente Desconhecido'}</h4>
                         <div className="flex items-center gap-2 mt-1">
                             <span className="text-xs text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full">{apt.procedure}</span>

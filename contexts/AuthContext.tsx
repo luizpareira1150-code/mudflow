@@ -18,11 +18,14 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const stored = authService.getCurrentUser();
-    if (stored) {
-      setUser(stored);
-    }
-    setLoading(false);
+    const initAuth = async () => {
+      const stored = authService.getCurrentUser();
+      if (stored) {
+        setUser(stored);
+      }
+      setLoading(false);
+    };
+    initAuth();
   }, []);
 
   const login = async (u: string, p: string): Promise<boolean> => {

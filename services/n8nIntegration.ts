@@ -8,19 +8,18 @@ import { recommendationService } from './recommendationService';
 import { doctorAvailabilityService } from './doctorAvailabilityService';
 import { rateLimiterService } from './rateLimiterService';
 import { STORAGE_KEYS, getStorage, setStorage } from './storage';
+import { monitoringService } from './monitoring';
+import { z } from 'zod';
 
-// Gera token único para cada clínica
 export const generateApiToken = (clinicId: string): string => {
   const timestamp = Date.now();
   const random = Math.random().toString(36).substring(2, 15);
   return `medflow_${clinicId}_${timestamp}_${random}`;
 };
 
-// Interface para payloads enriquecidos enviados AO N8N
 export interface N8NOutgoingPayload {
   event: 'APPOINTMENT_CREATED' | 'STATUS_CHANGED' | 'AGENDA_BLOCKED' | 'DOCTOR_CREATED' | 'DOCTOR_UPDATED' | 'DOCTOR_DELETED' | 'PASSWORD_RECOVERY';
   data: {
-    // Appointment Core Data
     appointmentId?: string;
     patientName?: string;
     patientPhone?: string;
@@ -30,16 +29,11 @@ export interface N8NOutgoingPayload {
     oldStatus?: string;
     procedure?: string;
     notes?: string;
-    
-    // Legacy support fields
     doctorId?: string;
     doctorName?: string;
     clinicId: string;
-    
-    // Additional generic data
     [key: string]: any;
   };
-  // RICH CONTEXT: Dados pré-carregados para facilitar a vida no N8N
   context?: {
     doctor?: {
       id: string;
@@ -54,7 +48,6 @@ export interface N8NOutgoingPayload {
     };
     evolution?: {
       instanceName?: string;
-      apiKey?: string; // CUIDADO: Em produção real, enviar via Header. Aqui facilitamos para o N8N.
       baseUrl?: string;
     };
     system?: {
@@ -68,11 +61,10 @@ export interface N8NOutgoingPayload {
 class N8NIntegrationServiceClass {
   private queue: WebhookQueueItem[] = [];
   private readonly MAX_RETRIES = 5;
-  private readonly QUEUE_CHECK_INTERVAL = 30000; // 30 segundos
+  private readonly QUEUE_CHECK_INTERVAL = 30000; 
 
   constructor() {
     this.loadQueue();
-    // Iniciar worker de processamento da fila
     setInterval(() => this.processQueue(), this.QUEUE_CHECK_INTERVAL);
   }
 
@@ -91,19 +83,18 @@ class N8NIntegrationServiceClass {
       payload,
       headers,
       retryCount: 0,
-      nextRetry: Date.now(), // Pronto para tentar
+      nextRetry: Date.now(),
       createdAt: Date.now(),
       status: 'PENDING'
     };
     this.queue.push(newItem);
     this.saveQueue();
-    console.log(`[QUEUE] Webhook adicionado à fila persistente: ${newItem.id}`);
+    monitoringService.trackMetric('webhook_queue_size', this.queue.length);
   }
 
   private calculateBackoff(retryCount: number): number {
-    // Exponential Backoff: 2s, 4s, 8s, 16s, 32s + Jitter
     const baseDelay = Math.pow(2, retryCount + 1) * 1000; 
-    const jitter = Math.random() * 500; // Até 500ms de aleatoriedade
+    const jitter = Math.random() * 500;
     return baseDelay + jitter;
   }
 
@@ -112,10 +103,6 @@ class N8NIntegrationServiceClass {
 
     const now = Date.now();
     const pendingItems = this.queue.filter(item => item.nextRetry <= now && item.status !== 'FAILED');
-
-    if (pendingItems.length > 0) {
-      console.log(`[WORKER] Processando ${pendingItems.length} webhooks pendentes...`);
-    }
 
     for (const item of pendingItems) {
       try {
@@ -129,15 +116,13 @@ class N8NIntegrationServiceClass {
           throw new Error(`HTTP ${response.status}`);
         }
 
-        // Sucesso: Remover da fila
         this.queue = this.queue.filter(q => q.id !== item.id);
         this.saveQueue();
-        console.log(`[WORKER] Webhook ${item.id} enviado com sucesso!`);
+        monitoringService.trackMetric('webhook_worker_success', 1, { url: item.url });
 
       } catch (error) {
-        console.warn(`[WORKER] Falha ao enviar ${item.id}. Tentativa ${item.retryCount + 1}/${this.MAX_RETRIES}`);
-        
-        // Atualizar item na fila
+        monitoringService.trackError(error as Error, { source: 'WebhookWorker', itemId: item.id });
+
         const index = this.queue.findIndex(q => q.id === item.id);
         if (index !== -1) {
           const updatedItem = this.queue[index];
@@ -145,8 +130,7 @@ class N8NIntegrationServiceClass {
           
           if (updatedItem.retryCount >= this.MAX_RETRIES) {
             updatedItem.status = 'FAILED';
-            console.error(`[WORKER] Webhook ${item.id} falhou definitivamente após ${this.MAX_RETRIES} tentativas.`);
-            // Opcional: Notificar admin ou mover para Dead Letter Queue
+            monitoringService.trackEvent('webhook_permanent_failure', { itemId: item.id, url: item.url });
           } else {
             updatedItem.nextRetry = Date.now() + this.calculateBackoff(updatedItem.retryCount);
           }
@@ -157,17 +141,13 @@ class N8NIntegrationServiceClass {
     }
   }
 
-  // Envia dados para o N8N (Outbound) com Retry Logic Híbrido
   public async sendToN8N(payload: N8NOutgoingPayload, settings: ClinicSettings) {
     if (!settings.n8nWebhookUrl) return;
 
-    // Se não estiver em modo produção, apenas loga
     if (!settings.n8nProductionMode) {
-      console.group('🚀 [N8N Simulation] Webhook Triggered (Rich Context)');
+      console.group('🚀 [N8N Simulation] Webhook Triggered');
       console.log('Target URL:', settings.n8nWebhookUrl);
-      console.log('Event:', payload.event);
-      console.log('Core Data:', payload.data);
-      console.log('Enriched Context:', payload.context);
+      console.log('Data:', payload.data);
       console.groupEnd();
       return;
     }
@@ -176,15 +156,13 @@ class N8NIntegrationServiceClass {
       'Content-Type': 'application/json',
       'X-Clinic-Token': settings.clinicToken || '',
       'X-Api-Token': settings.apiToken || '',
-      // Headers auxiliares para o N8N identificar origem rapidamente
       'X-Event-Type': payload.event,
       'X-Evolution-Instance': payload.context?.evolution?.instanceName || ''
     };
 
-    // Tentar envio imediato com retentativa rápida em memória (Fast Failover)
-    // Se falhar tudo, joga pra fila persistente (Reliability)
     let attempts = 0;
-    const IMMEDIATE_RETRIES = 2; // Tenta 2x na hora
+    const IMMEDIATE_RETRIES = 2;
+    const startTime = performance.now();
 
     while (attempts <= IMMEDIATE_RETRIES) {
       try {
@@ -198,261 +176,241 @@ class N8NIntegrationServiceClass {
           throw new Error(`N8N responded with ${response.status}`);
         }
         
-        return; // Sucesso imediato
+        const duration = performance.now() - startTime;
+        monitoringService.trackMetric('webhook_outbound_latency', duration, { event: payload.event });
+        return; 
 
       } catch (error) {
         attempts++;
         if (attempts <= IMMEDIATE_RETRIES) {
-          const delay = 1000 * attempts; // 1s, 2s
-          console.warn(`[WEBHOOK] Falha temporária. Retentando em ${delay}ms...`);
+          const delay = 1000 * attempts;
           await new Promise(r => setTimeout(r, delay));
         } else {
-          // Falhou todas as tentativas imediatas -> Salvar na fila persistente
-          console.error(`[WEBHOOK] Falha na entrega imediata. Salvando na fila para retry em background.`);
+          monitoringService.trackMetric('webhook_outbound_failure_queued', 1, { event: payload.event });
           this.addToQueue(settings.n8nWebhookUrl, payload, headers);
         }
       }
     }
   }
 
-  // Recebe dados do N8N (Inbound Simulation)
   public async receiveFromN8N(
-    payload: { action: string; data: any; clinicId: string; authToken: string }, 
+    rawPayload: any, 
     validTokens: Map<string, string>,
-    context: any // Injected DataService to avoid circular dependencies
+    context: any
   ) {
-    
-    // 0. RATE LIMITING (Proteção contra Abuse/DDoS)
-    if (!rateLimiterService.checkLimit(payload.clinicId)) {
-        console.warn(`[RATE LIMIT] Bloqueado excesso de requisições para clínica ${payload.clinicId}`);
-        throw new Error('RATE_LIMIT_EXCEEDED: Muitas requisições em curto período. Tente novamente em alguns segundos.');
+    const startTime = performance.now();
+
+    // Basic structure check before Zod (for rate limiting logic)
+    const clinicId = rawPayload.clinicId;
+    if (!clinicId) throw new Error('Clinic ID missing in payload');
+
+    if (!rateLimiterService.checkLimit(clinicId)) {
+        throw new Error('RATE_LIMIT_EXCEEDED: Muitas requisições em curto período.');
     }
 
-    // 1. Validação de Segurança
-    const expectedToken = validTokens.get(payload.clinicId);
-    if (!expectedToken || payload.authToken !== expectedToken) {
-      throw new Error('Acesso Negado: Token de autenticação inválido.');
-    }
-
-    // 2. Validação do Payload
-    const validation = validateSafe(N8NWebhookSchema, payload);
-    if (!validation.success) {
-      throw new Error(`Payload Inválido: ${validation.errors?.join(', ')}`);
-    }
-
-    const { action, data } = validation.data as any;
-
-    // 3. Processamento da Ação
-    switch (action) {
-      case 'GET_SLOT_SUGGESTIONS': {
-        if (!data.doctorId || !data.patientPhone) {
-             throw new Error('Dados insuficientes: doctorId e patientPhone são obrigatórios para sugestão.');
+    try {
+        const expectedToken = validTokens.get(clinicId);
+        if (!expectedToken || rawPayload.authToken !== expectedToken) {
+          throw new Error('Acesso Negado: Token de autenticação inválido.');
         }
 
-        const patients = await context.searchPatients(data.patientPhone, payload.clinicId);
-        const patient = patients[0]; 
-
-        if (!patient) {
-            return { 
-                success: false, 
-                message: 'Paciente não encontrado para histórico.', 
-                suggestions: [] 
-            };
-        }
-
-        const suggestions = await recommendationService.suggestOptimalSlots(
-            payload.clinicId,
-            data.doctorId,
-            patient.id
-        );
-
-        return {
-            success: true,
-            patientName: patient.name,
-            suggestions: suggestions.map((s: any) => ({
-                date: s.slot.date,
-                time: s.slot.time,
-                score: s.score,
-                reason: s.reason 
-            }))
-        };
-      }
-
-      case 'CREATE_APPOINTMENT': {
-        // VALIDAR DISPONIBILIDADE ANTES DE TENTAR RESERVAR 
-        const availabilityCheck = await doctorAvailabilityService.validateAvailability( 
-            data.doctorId, 
-            payload.clinicId, 
-            data.date, 
-            data.time 
-        );
-
-        if (!availabilityCheck.isAvailable) { 
-            const suggestionsText = availabilityCheck.suggestedDates && availabilityCheck.suggestedDates.length > 0 
-                ? `\n\nSugestões: ${availabilityCheck.suggestedDates.map((d: string) => new Date(d).toLocaleDateString('pt-BR')).join(', ')}` 
-                : '';
-
-            throw new Error(`AVAILABILITY_ERROR:${availabilityCheck.reason}${suggestionsText}`);
-        }
-
-        let reservationId: string | undefined;
-        let retryCount = 0;
-        const MAX_RETRIES = 3;
+        // --- VALIDAÇÃO ESTRITA (TYPE SAFE) ---
+        // Zod agora garante que se action="UPDATE_STATUS", data tem appointmentId
+        const validation = N8NWebhookSchema.safeParse(rawPayload);
         
-        while (retryCount < MAX_RETRIES) {
-          try {
-            const reservationResult = await context.slotReservationService.reserveSlot({
-              doctorId: data.doctorId,
-              date: data.date,
-              time: data.time,
-              clinicId: payload.clinicId,
-              reservedBy: 'N8N_WEBHOOK'
-            });
-            
-            if (!reservationResult.success) {
-              console.warn(`[N8N RETRY ${retryCount + 1}] Conflito detectado`);
-              retryCount++;
-              if (retryCount >= MAX_RETRIES) {
-                throw new Error('CONFLICT_MAX_RETRIES:Não foi possível agendar após múltiplas tentativas.');
-              }
-              await new Promise(resolve => setTimeout(resolve, Math.pow(2, retryCount) * 1000));
-              continue;
-            }
-            
-            reservationId = reservationResult.reservation!.id;
-            
-            const patient = await context.getOrCreatePatient({
-              name: data.patientName || 'Paciente (Via WhatsApp)',
-              phone: data.patientPhone || '',
-              cpf: data.patientCPF,
-              organizationId: payload.clinicId
-            }, AuditSource.N8N_WEBHOOK);
+        if (!validation.success) {
+            console.error("Webhook Validation Failed:", validation.error.format());
+            throw new Error(`Payload Inválido: ${validation.error.errors[0]?.message}`);
+        }
 
-            const appt = await context.createAppointment({
-              clinicId: payload.clinicId,
-              doctorId: data.doctorId,
-              patientId: patient.id,
-              date: data.date,
-              time: data.time,
-              status: AppointmentStatus.AGENDADO,
-              procedure: data.procedure || 'Agendamento via Bot',
-              notes: data.notes
-            }, AuditSource.N8N_WEBHOOK, reservationId);
+        // O TypeScript agora infere o tipo correto automaticamente baseado no discriminator 'action'
+        const payload = validation.data;
+        const { action, data } = payload;
 
-            await notificationService.notify({
-              title: 'Novo Agendamento (Bot)',
-              message: `${patient.name} agendou para ${data.date} às ${data.time} via WhatsApp.`,
-              type: 'info',
-              clinicId: payload.clinicId,
-              targetRole: [UserRole.SECRETARY],
-              priority: 'medium',
-              actionLink: 'view:Agenda',
-              metadata: {
-                appointmentId: appt.id,
-                patientId: patient.id,
+        switch (action) {
+          case 'GET_SLOT_SUGGESTIONS': {
+            // TypeScript knows 'data' has 'patientPhone' and 'doctorId'
+            const patients = await context.searchPatients(data.patientPhone, clinicId);
+            const patient = patients[0]; 
+            if (!patient) return { success: false, message: 'Paciente não encontrado.', suggestions: [] };
+
+            const suggestions = await recommendationService.suggestOptimalSlots(clinicId, data.doctorId, patient.id);
+            return {
+                success: true,
                 patientName: patient.name,
-                source: 'WhatsApp Bot',
-                hadConflicts: retryCount > 0
-              }
-            });
-
-            return { success: true, id: appt.id, message: 'Agendamento criado via N8N', retries: retryCount };
-            
-          } catch (error: any) {
-            if (reservationId) {
-              await context.slotReservationService.cancelReservation(reservationId);
-            }
-            if (error.message?.includes('CONFLICT_MAX_RETRIES')) {
-              await context.logEvent({
-                organizationId: payload.clinicId,
-                action: AuditAction.APPOINTMENT_CREATED,
-                entityType: 'Appointment',
-                entityId: 'conflict_unresolved',
-                entityName: 'N8N CONFLICT',
-                description: `N8N falhou após ${retryCount} tentativas: ${data.date} ${data.time}`,
-                metadata: { retries: retryCount, source: 'N8N_WEBHOOK', patientName: data.patientName }
-              });
-              throw error;
-            }
-            throw error;
+                suggestions: suggestions.map((s: any) => ({
+                    date: s.slot.date,
+                    time: s.slot.time,
+                    score: s.score,
+                    reason: s.reason 
+                }))
+            };
           }
-        }
-        throw new Error('Falha inesperada no loop de retry');
-      }
 
-      case 'UPDATE_STATUS': {
-        if (!data.appointmentId || !data.newStatus) throw new Error('Dados incompletos');
-        const updated = await context.updateAppointmentStatus(data.appointmentId, data.newStatus, AuditSource.N8N_WEBHOOK);
-        
-        if (data.newStatus === AppointmentStatus.NAO_VEIO || data.newStatus === AppointmentStatus.BLOQUEADO) {
-             await notificationService.notify({
-                title: 'Cancelamento via Bot',
-                message: `O agendamento de ${updated.patient?.name || 'Paciente'} foi alterado para ${data.newStatus} automaticamente.`,
+          case 'CREATE_APPOINTMENT': {
+            // TypeScript knows 'data' has date, time, doctorId
+            const availabilityCheck = await doctorAvailabilityService.validateAvailability( 
+                data.doctorId, 
+                clinicId, 
+                data.date, 
+                data.time 
+            );
+
+            if (!availabilityCheck.isAvailable) { 
+                throw new Error(`AVAILABILITY_ERROR:${availabilityCheck.reason}`);
+            }
+
+            let reservationId: string | undefined;
+            let retryCount = 0;
+            const MAX_RETRIES = 3;
+            
+            while (retryCount < MAX_RETRIES) {
+              try {
+                const reservationResult = await context.slotReservationService.reserveSlot({
+                  doctorId: data.doctorId,
+                  date: data.date,
+                  time: data.time,
+                  clinicId: clinicId,
+                  reservedBy: 'N8N_WEBHOOK'
+                });
+                
+                if (!reservationResult.success) {
+                  retryCount++;
+                  if (retryCount >= MAX_RETRIES) throw new Error('CONFLICT_MAX_RETRIES');
+                  await new Promise(resolve => setTimeout(resolve, Math.pow(2, retryCount) * 1000));
+                  continue;
+                }
+                
+                reservationId = reservationResult.reservation!.id;
+                
+                const patient = await context.getOrCreatePatient({
+                  name: data.patientName || 'Via WhatsApp',
+                  phone: data.patientPhone || '',
+                  cpf: data.patientCPF,
+                  organizationId: clinicId
+                }, AuditSource.N8N_WEBHOOK);
+
+                const appt = await context.createAppointment({
+                  clinicId: clinicId,
+                  doctorId: data.doctorId,
+                  patientId: patient.id,
+                  date: data.date,
+                  time: data.time,
+                  status: AppointmentStatus.AGENDADO,
+                  procedure: data.procedure || 'Bot',
+                  notes: data.notes || ''
+                }, AuditSource.N8N_WEBHOOK, reservationId);
+
+                return { success: true, id: appt.id, message: 'Agendado' };
+                
+              } catch (error: any) {
+                if (reservationId) await context.slotReservationService.cancelReservation(reservationId);
+                throw error;
+              }
+            }
+            throw new Error('Falha ao agendar');
+          }
+
+          case 'UPDATE_STATUS': {
+            // TypeScript knows 'data' has appointmentId and newStatus
+            const updated = await context.updateAppointmentStatus(data.appointmentId, data.newStatus, AuditSource.N8N_WEBHOOK);
+            return { success: true, id: updated.id, message: 'Status atualizado' };
+          }
+
+          case 'MOVE_TO_HUMAN_ATTENDANCE': {
+            // TypeScript knows 'data' has appointmentId
+            await context.updateAppointmentStatus(data.appointmentId, AppointmentStatus.ATENDIMENTO_HUMANO, AuditSource.N8N_WEBHOOK);
+            
+            await notificationService.notify({
+                title: 'Atendimento Humano Necessário',
+                message: `${data.patientName || 'Paciente'} solicita ajuda.`,
                 type: 'warning',
-                clinicId: payload.clinicId,
-                targetRole: [UserRole.SECRETARY, UserRole.DOCTOR_ADMIN],
-                priority: 'medium',
-                metadata: {
-                    appointmentId: updated.id,
-                    oldStatus: updated.status,
-                    newStatus: data.newStatus
+                priority: 'high',
+                clinicId: clinicId,
+                targetRole: [UserRole.SECRETARY],
+                metadata: { 
+                    appointmentId: data.appointmentId, 
+                    patientPhone: data.patientPhone,
+                    triggerPopup: true 
                 }
             });
+            return { success: true };
+          }
+
+          case 'DETECT_HUMAN_INTERVENTION': {
+            // TypeScript knows 'data' has appointmentId
+            await context.updateAppointmentStatus(data.appointmentId, AppointmentStatus.ATENDIMENTO_HUMANO, AuditSource.N8N_WEBHOOK);
+
+            await notificationService.notify({
+                title: 'Bot Pausado',
+                message: `Intervenção detectada em ${data.patientName || 'conversa'}.`,
+                type: 'info',
+                priority: 'low',
+                clinicId: clinicId,
+                targetRole: [UserRole.SECRETARY],
+                metadata: { appointmentId: data.appointmentId, triggerPopup: false }
+            });
+            return { success: true };
+          }
+
+          case 'BLOCK_SCHEDULE': {
+            // TypeScript knows 'data' has startHour, endHour, etc.
+            await context.createBatchAppointments([{
+                clinicId: clinicId,
+                doctorId: data.doctorId,
+                date: data.date,
+                time: `${data.startHour} - ${data.endHour}`,
+                status: AppointmentStatus.BLOQUEADO,
+                notes: data.notes || 'Bloqueio N8N'
+            }], AuditSource.N8N_WEBHOOK);
+            return { success: true };
+          }
+
+          case 'CREATE_PATIENT_CONTACT': {
+            const patient = await context.getOrCreatePatient({
+                name: data.patientName,
+                phone: data.patientPhone,
+                organizationId: clinicId
+            }, AuditSource.N8N_WEBHOOK);
+
+            const lead = await context.createAppointment({
+                clinicId: clinicId,
+                doctorId: data.doctorId, 
+                patientId: patient.id,
+                date: new Date().toISOString().split('T')[0], 
+                time: '00:00',
+                status: AppointmentStatus.EM_CONTATO,
+                procedure: 'Lead WhatsApp',
+                notes: data.message || ''
+            }, AuditSource.N8N_WEBHOOK);
+            
+            await notificationService.notify({
+                title: 'Novo Lead',
+                message: `${patient.name} iniciou contato.`,
+                type: 'success',
+                clinicId: clinicId,
+                targetRole: [UserRole.SECRETARY],
+                priority: 'low'
+            });
+
+            return { success: true, id: patient.id };
+          }
+
+          default:
+            const _exhaustiveCheck: never = action as never;
+            throw new Error(`Ação não suportada: ${_exhaustiveCheck}`);
         }
-
-        return { success: true, id: updated.id, message: `Status alterado para ${data.newStatus}` };
-      }
-
-      case 'BLOCK_SCHEDULE': {
-        await context.createBatchAppointments([{
-            clinicId: payload.clinicId,
-            doctorId: data.doctorId,
-            date: data.date,
-            time: `${data.startHour} - ${data.endHour}`,
-            status: AppointmentStatus.BLOQUEADO,
-            notes: data.notes || 'Bloqueio via N8N'
-        }], AuditSource.N8N_WEBHOOK);
-
-        return { success: true, message: 'Bloqueio processado' };
-      }
-
-      case 'CREATE_PATIENT_CONTACT': {
-         const patient = await context.getOrCreatePatient({
-             name: data.patientName,
-             phone: data.patientPhone,
-             organizationId: payload.clinicId
-         }, AuditSource.N8N_WEBHOOK);
-
-         const lead = await context.createAppointment({
-            clinicId: payload.clinicId,
-            doctorId: data.doctorId, 
-            patientId: patient.id,
-            date: new Date().toISOString().split('T')[0], 
-            time: '00:00',
-            status: AppointmentStatus.EM_CONTATO,
-            procedure: 'Lead WhatsApp',
-            notes: data.message || 'Entrou em contato via WhatsApp'
-         }, AuditSource.N8N_WEBHOOK);
-         
-         await notificationService.notify({
-            title: 'Novo Lead no WhatsApp',
-            message: `${patient.name} iniciou uma conversa. Verifique o CRM.`,
-            type: 'success',
-            clinicId: payload.clinicId,
-            targetRole: [UserRole.SECRETARY],
-            priority: 'low',
-            actionLink: 'view:Dashboard',
-            metadata: {
-                appointmentId: lead.id,
-                patientName: patient.name
-            }
-         });
-
-         return { success: true, id: patient.id, message: 'Contato criado' };
-      }
-
-      default:
-        throw new Error('Ação desconhecida');
+    } catch (error: any) {
+        const duration = performance.now() - startTime;
+        // Safe access to action if possible
+        const actionName = rawPayload?.action || 'UNKNOWN';
+        monitoringService.trackMetric('webhook_inbound_latency', duration, { action: actionName, status: 'error' });
+        monitoringService.trackError(error, { source: 'WebhookInbound', payload: rawPayload });
+        throw error;
+    } finally {
+        const duration = performance.now() - startTime;
+        const actionName = rawPayload?.action || 'UNKNOWN';
+        monitoringService.trackMetric('webhook_inbound_latency', duration, { action: actionName });
     }
   }
 }

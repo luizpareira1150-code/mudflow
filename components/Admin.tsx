@@ -3,10 +3,9 @@ import React, { useState, useEffect } from 'react';
 import { User, UserRole, ClinicSettings, Doctor, Organization, AccountType } from '../types';
 import { dataService, authService } from '../services/mockSupabase';
 import Automations from './Automations';
-import { Users, Building2, UserPlus, KeyRound, Trash2, RefreshCw, AlertTriangle, X, Webhook, MessageSquare, Save, Link2, Lock, Eye, EyeOff, Stethoscope, ShieldCheck, Workflow, Copy, Shield, CheckCircle, Zap, Phone, Activity, Calendar } from 'lucide-react';
+import { Users, Building2, UserPlus, KeyRound, Trash2, RefreshCw, AlertTriangle, X, Webhook, MessageSquare, Save, Link2, Lock, Eye, EyeOff, Stethoscope, ShieldCheck, Workflow, Copy, Shield, CheckCircle, Zap, Phone, Calendar, FileBadge, DollarSign, Mail } from 'lucide-react';
 import { useToast } from './ToastProvider';
 import { generateApiToken } from '../services/n8nIntegration';
-import { ActivityLogs } from './ActivityLogs';
 import { DoctorAvailabilityConfig } from './DoctorAvailabilityConfig';
 
 interface AdminProps {
@@ -15,10 +14,13 @@ interface AdminProps {
 
 const Admin: React.FC<AdminProps> = ({ user: currentUser }) => {
   const { showToast } = useToast();
-  const [activeTab, setActiveTab] = useState<'team' | 'doctors' | 'integrations' | 'automations' | 'audit'>('team');
+  const [activeTab, setActiveTab] = useState<'team' | 'doctors' | 'integrations' | 'automations'>('team');
 
   // --- TEAM STATE ---
   const [users, setUsers] = useState<User[]>([]);
+  const [selectedUser, setSelectedUser] = useState<User | null>(null); // State for User Modal
+  const [organizations, setOrganizations] = useState<Organization[]>([]); // Cache for orgs (Super Admin)
+  
   const [newUser, setNewUser] = useState({ 
     name: '', 
     email: '', 
@@ -28,12 +30,13 @@ const Admin: React.FC<AdminProps> = ({ user: currentUser }) => {
     accountType: AccountType.CONSULTORIO,
     organizationName: '',
     phone1: '',
-    phone2: ''
+    phone2: '',
+    subscriptionValue: ''
   });
   
   // --- DOCTORS STATE (For CLINICA accounts only) ---
   const [doctors, setDoctors] = useState<Doctor[]>([]);
-  const [newDoctor, setNewDoctor] = useState({ name: '', specialty: 'Clínico Geral', color: 'blue' });
+  const [newDoctor, setNewDoctor] = useState({ name: '', specialty: 'Clínico Geral', crm: '', color: 'blue' });
   const [selectedDoctorForAvailability, setSelectedDoctorForAvailability] = useState<Doctor | null>(null);
 
   // --- ORGANIZATION STATE ---
@@ -71,6 +74,10 @@ const Admin: React.FC<AdminProps> = ({ user: currentUser }) => {
         u.role === UserRole.DOCTOR_ADMIN && u.id !== currentUser.id
       );
       setUsers(adminsOnly);
+      
+      // Load Orgs for Context
+      const orgs = await dataService.getOrganizations();
+      setOrganizations(orgs);
     } else {
       setUsers(fetchedUsers);
     }
@@ -113,14 +120,15 @@ const Admin: React.FC<AdminProps> = ({ user: currentUser }) => {
         accountType: newUser.accountType,
         organizationName: newUser.organizationName,
         phone1: newUser.phone1,
-        phone2: newUser.phone2
+        phone2: newUser.phone2,
+        subscriptionValue: newUser.subscriptionValue ? Number(newUser.subscriptionValue) : 0
       });
       
       await loadData();
 
       setNewUser({ 
           name: '', email: '', username: '', password: '', role: UserRole.SECRETARY,
-          accountType: AccountType.CONSULTORIO, organizationName: '', phone1: '', phone2: ''
+          accountType: AccountType.CONSULTORIO, organizationName: '', phone1: '', phone2: '', subscriptionValue: ''
       });
       showToast('success', 'Usuário criado com sucesso!');
     } catch (error: any) {
@@ -143,10 +151,11 @@ const Admin: React.FC<AdminProps> = ({ user: currentUser }) => {
               organizationId: currentUser.clinicId,
               name: newDoctor.name,
               specialty: newDoctor.specialty,
+              crm: newDoctor.crm,
               color: newDoctor.color
           });
           await loadData();
-          setNewDoctor({ name: '', specialty: 'Clínico Geral', color: 'blue' });
+          setNewDoctor({ name: '', specialty: 'Clínico Geral', crm: '', color: 'blue' });
           showToast('success', 'Médico adicionado à equipe!');
       } catch (error) {
           showToast('error', 'Erro ao adicionar médico.');
@@ -208,6 +217,7 @@ const Admin: React.FC<AdminProps> = ({ user: currentUser }) => {
       }
       await loadData();
       setDeleteModal({ isOpen: false, user: null, doctor: null });
+      setSelectedUser(null); // Close detail modal if open
     } catch (error) {
       showToast('error', 'Erro ao excluir.');
     } finally {
@@ -238,6 +248,19 @@ const Admin: React.FC<AdminProps> = ({ user: currentUser }) => {
   // Check Permissions for Tabs
   const canViewDoctors = currentUser.role === UserRole.DOCTOR_ADMIN && currentOrganization?.accountType === AccountType.CLINICA;
 
+  // Helper to get role color
+  const getRoleColor = (role: string) => {
+      switch(role) {
+          case UserRole.OWNER: return 'bg-purple-100 text-purple-700 border-purple-200';
+          case UserRole.DOCTOR_ADMIN: return 'bg-blue-100 text-blue-700 border-blue-200';
+          case UserRole.SECRETARY: return 'bg-emerald-100 text-emerald-700 border-emerald-200';
+          default: return 'bg-gray-100 text-gray-700 border-gray-200';
+      }
+  };
+
+  // Helper to find org for user
+  const getUserOrg = (user: User) => organizations.find(o => o.id === user.clinicId);
+
   return (
     <div className={`mx-auto pb-10 relative p-8 animate-in fade-in duration-500 ${activeTab === 'automations' ? 'max-w-6xl' : 'max-w-4xl'}`}>
       <div className="mb-6">
@@ -260,7 +283,7 @@ const Admin: React.FC<AdminProps> = ({ user: currentUser }) => {
             ${activeTab === 'team' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
         >
           <Users size={18} />
-          {currentUser.role === UserRole.OWNER ? 'Médicos (Clientes)' : 'Minha Equipe'}
+          {currentUser.role === UserRole.OWNER ? 'Contas Ativas (Cards)' : 'Minha Equipe'}
         </button>
         
         {canViewDoctors && (
@@ -294,234 +317,268 @@ const Admin: React.FC<AdminProps> = ({ user: currentUser }) => {
                 </button>
             </>
         )}
-        
-        <button
-          onClick={() => setActiveTab('audit')}
-          className={`flex items-center gap-2 px-6 py-2.5 rounded-lg text-sm font-medium transition-all whitespace-nowrap
-            ${activeTab === 'audit' ? 'bg-white text-red-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
-        >
-          <Activity size={18} />
-          Auditoria
-        </button>
       </div>
 
       {/* --- TAB: TEAM --- */}
       {activeTab === 'team' && (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-8 animate-in fade-in slide-in-from-left-4 duration-300">
-            {/* Create User Form */}
-            <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200 h-fit">
-            <h3 className="text-lg font-bold mb-4 flex items-center gap-2 text-gray-800">
-                <UserPlus size={20} className="text-blue-600" />
-                Cadastrar {allowedRoleToCreate === UserRole.DOCTOR_ADMIN ? 'Novo Cliente' : 'Secretária'}
-            </h3>
-            <form onSubmit={handleCreateUser} className="space-y-4">
-                {currentUser.role === UserRole.OWNER && (
-                    <div className="p-4 bg-gray-50 rounded-lg border border-gray-200 space-y-3 mb-4">
-                        <h4 className="text-xs font-bold text-gray-500 uppercase flex items-center gap-1">
-                            <Building2 size={14} /> Dados do Contrato
-                        </h4>
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">Tipo de Conta</label>
-                            <div className="grid grid-cols-2 gap-2">
-                                <button 
-                                    type="button"
-                                    onClick={() => setNewUser({...newUser, accountType: AccountType.CONSULTORIO})}
-                                    className={`text-xs py-2 px-3 rounded border transition-colors ${newUser.accountType === AccountType.CONSULTORIO ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-300'}`}
-                                >
-                                    Consultório (Individual)
-                                </button>
-                                <button 
-                                    type="button"
-                                    onClick={() => setNewUser({...newUser, accountType: AccountType.CLINICA})}
-                                    className={`text-xs py-2 px-3 rounded border transition-colors ${newUser.accountType === AccountType.CLINICA ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-300'}`}
-                                >
-                                    Clínica (Multi-Médico)
-                                </button>
+        <div className="flex flex-col gap-8 animate-in fade-in slide-in-from-left-4 duration-300">
+            {/* 1. Create User Form */}
+            <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
+                <h3 className="text-lg font-bold mb-4 flex items-center gap-2 text-gray-800">
+                    <UserPlus size={20} className="text-blue-600" />
+                    Cadastrar {allowedRoleToCreate === UserRole.DOCTOR_ADMIN ? 'Novo Cliente' : 'Secretária'}
+                </h3>
+                <form onSubmit={handleCreateUser} className="space-y-4">
+                    {currentUser.role === UserRole.OWNER && (
+                        <div className="p-4 bg-blue-50 rounded-lg border border-blue-100 space-y-3 mb-4">
+                            <h4 className="text-xs font-bold text-blue-800 uppercase flex items-center gap-1">
+                                <Building2 size={14} /> Dados do Contrato
+                            </h4>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">Tipo de Conta</label>
+                                    <div className="grid grid-cols-2 gap-2">
+                                        <button 
+                                            type="button"
+                                            onClick={() => setNewUser({...newUser, accountType: AccountType.CONSULTORIO})}
+                                            className={`text-xs py-2 px-3 rounded border transition-colors ${newUser.accountType === AccountType.CONSULTORIO ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-300'}`}
+                                        >
+                                            Consultório (Individual)
+                                        </button>
+                                        <button 
+                                            type="button"
+                                            onClick={() => setNewUser({...newUser, accountType: AccountType.CLINICA})}
+                                            className={`text-xs py-2 px-3 rounded border transition-colors ${newUser.accountType === AccountType.CLINICA ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-300'}`}
+                                        >
+                                            Clínica (Multi-Médico)
+                                        </button>
+                                    </div>
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700">Nome do Estabelecimento</label>
+                                    <input
+                                        type="text"
+                                        required
+                                        value={newUser.organizationName}
+                                        onChange={e => setNewUser({...newUser, organizationName: e.target.value})}
+                                        className="w-full border border-gray-200 bg-white text-gray-900 rounded-lg px-3 py-2 mt-1 focus:ring-2 focus:ring-blue-500 outline-none text-sm"
+                                        placeholder={newUser.accountType === AccountType.CONSULTORIO ? "Consultório Dr. Fulano" : "Clínica Saúde Total"}
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700">Valor da Mensalidade (R$)</label>
+                                    <div className="relative">
+                                        <input
+                                            type="number"
+                                            required
+                                            value={newUser.subscriptionValue}
+                                            onChange={e => setNewUser({...newUser, subscriptionValue: e.target.value})}
+                                            className="w-full border border-gray-200 bg-white text-gray-900 rounded-lg pl-8 pr-3 py-2 mt-1 focus:ring-2 focus:ring-blue-500 outline-none text-sm"
+                                            placeholder="0.00"
+                                        />
+                                        <DollarSign size={14} className="absolute left-2.5 top-4 text-gray-400" />
+                                    </div>
+                                </div>
                             </div>
                         </div>
+                    )}
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div>
-                            <label className="block text-sm font-medium text-gray-700">Nome do Estabelecimento</label>
+                            <label className="block text-sm font-medium text-gray-700">Nome do Usuário</label>
                             <input
                                 type="text"
                                 required
-                                value={newUser.organizationName}
-                                onChange={e => setNewUser({...newUser, organizationName: e.target.value})}
-                                className="w-full border border-gray-200 bg-white text-gray-900 rounded-lg px-3 py-2 mt-1 focus:ring-2 focus:ring-blue-500 outline-none text-sm"
-                                placeholder={newUser.accountType === AccountType.CONSULTORIO ? "Consultório Dr. Fulano" : "Clínica Saúde Total"}
+                                value={newUser.name}
+                                onChange={e => setNewUser({...newUser, name: e.target.value})}
+                                className="w-full border border-gray-200 bg-white text-gray-900 rounded-lg px-3 py-2 mt-1 focus:ring-2 focus:ring-blue-500 outline-none transition-all placeholder-gray-400"
+                                placeholder="Nome completo"
+                                disabled={isLimitReached}
+                            />
+                        </div>
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700">Email de Contato</label>
+                            <input
+                                type="email"
+                                required
+                                value={newUser.email}
+                                onChange={e => setNewUser({...newUser, email: e.target.value})}
+                                className="w-full border border-gray-200 bg-white text-gray-900 rounded-lg px-3 py-2 mt-1 focus:ring-2 focus:ring-blue-500 outline-none transition-all placeholder-gray-400"
+                                placeholder="contato@email.com"
+                                disabled={isLimitReached}
                             />
                         </div>
                     </div>
-                )}
 
-                <div>
-                    <label className="block text-sm font-medium text-gray-700">Nome do Usuário</label>
-                    <input
-                        type="text"
-                        required
-                        value={newUser.name}
-                        onChange={e => setNewUser({...newUser, name: e.target.value})}
-                        className="w-full border border-gray-200 bg-white text-gray-900 rounded-lg px-3 py-2 mt-1 focus:ring-2 focus:ring-blue-500 outline-none transition-all placeholder-gray-400"
-                        placeholder="Nome completo"
-                        disabled={isLimitReached}
-                    />
-                </div>
-                <div>
-                    <label className="block text-sm font-medium text-gray-700">Email de Contato</label>
-                    <input
-                        type="email"
-                        required
-                        value={newUser.email}
-                        onChange={e => setNewUser({...newUser, email: e.target.value})}
-                        className="w-full border border-gray-200 bg-white text-gray-900 rounded-lg px-3 py-2 mt-1 focus:ring-2 focus:ring-blue-500 outline-none transition-all placeholder-gray-400"
-                        placeholder="contato@email.com"
-                        disabled={isLimitReached}
-                    />
-                </div>
-
-                {currentUser.role === UserRole.OWNER && (
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                        <label className="block text-sm font-medium text-gray-700">Telefone 1</label>
-                        <div className="relative">
-                          <input
-                              type="text"
-                              value={newUser.phone1}
-                              onChange={e => setNewUser({...newUser, phone1: e.target.value})}
-                              className="w-full border border-gray-200 bg-white text-gray-900 rounded-lg pl-8 pr-2 py-2 mt-1 focus:ring-2 focus:ring-blue-500 outline-none transition-all placeholder-gray-400"
-                              placeholder="(00) 00000-0000"
-                          />
-                          <Phone size={14} className="absolute left-2.5 top-4 text-gray-400" />
+                    {currentUser.role === UserRole.OWNER && (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700">Telefone 1</label>
+                            <div className="relative">
+                            <input
+                                type="text"
+                                value={newUser.phone1}
+                                onChange={e => setNewUser({...newUser, phone1: e.target.value})}
+                                className="w-full border border-gray-200 bg-white text-gray-900 rounded-lg pl-8 pr-2 py-2 mt-1 focus:ring-2 focus:ring-blue-500 outline-none transition-all placeholder-gray-400"
+                                placeholder="(00) 00000-0000"
+                            />
+                            <Phone size={14} className="absolute left-2.5 top-4 text-gray-400" />
+                            </div>
+                        </div>
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700">Telefone 2</label>
+                            <div className="relative">
+                            <input
+                                type="text"
+                                value={newUser.phone2}
+                                onChange={e => setNewUser({...newUser, phone2: e.target.value})}
+                                className="w-full border border-gray-200 bg-white text-gray-900 rounded-lg pl-8 pr-2 py-2 mt-1 focus:ring-2 focus:ring-blue-500 outline-none transition-all placeholder-gray-400"
+                                placeholder="(00) 00000-0000"
+                            />
+                            <Phone size={14} className="absolute left-2.5 top-4 text-gray-400" />
+                            </div>
                         </div>
                     </div>
-                    <div>
-                        <label className="block text-sm font-medium text-gray-700">Telefone 2</label>
-                        <div className="relative">
-                          <input
-                              type="text"
-                              value={newUser.phone2}
-                              onChange={e => setNewUser({...newUser, phone2: e.target.value})}
-                              className="w-full border border-gray-200 bg-white text-gray-900 rounded-lg pl-8 pr-2 py-2 mt-1 focus:ring-2 focus:ring-blue-500 outline-none transition-all placeholder-gray-400"
-                              placeholder="(00) 00000-0000"
-                          />
-                          <Phone size={14} className="absolute left-2.5 top-4 text-gray-400" />
+                    )}
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700">Login</label>
+                            <input
+                            type="text"
+                            required
+                            value={newUser.username}
+                            onChange={e => setNewUser({...newUser, username: e.target.value})}
+                            className="w-full border border-gray-200 bg-white text-gray-900 rounded-lg px-3 py-2 mt-1 focus:ring-2 focus:ring-blue-500 outline-none transition-all placeholder-gray-400"
+                            placeholder="usuario.login"
+                            disabled={isLimitReached}
+                            />
                         </div>
-                    </div>
-                  </div>
-                )}
-
-                <div className="grid grid-cols-2 gap-4">
-                <div>
-                    <label className="block text-sm font-medium text-gray-700">Login</label>
-                    <input
-                    type="text"
-                    required
-                    value={newUser.username}
-                    onChange={e => setNewUser({...newUser, username: e.target.value})}
-                    className="w-full border border-gray-200 bg-white text-gray-900 rounded-lg px-3 py-2 mt-1 focus:ring-2 focus:ring-blue-500 outline-none transition-all placeholder-gray-400"
-                    placeholder="usuario.login"
-                    disabled={isLimitReached}
-                    />
-                </div>
-                <div>
-                    <label className="block text-sm font-medium text-gray-700">Senha</label>
-                    <div className="relative">
-                    <input
-                        type="text"
-                        required
-                        value={newUser.password}
-                        onChange={e => setNewUser({...newUser, password: e.target.value})}
-                        className="w-full border border-gray-200 bg-white text-gray-900 rounded-lg pl-8 pr-2 py-2 mt-1 focus:ring-2 focus:ring-blue-500 outline-none transition-all placeholder-gray-400"
-                        placeholder="123456"
-                        disabled={isLimitReached}
-                    />
-                    <KeyRound size={14} className="absolute left-2.5 top-4 text-gray-400" />
-                    </div>
-                </div>
-                </div>
-                
-                {isLimitReached && (
-                    <div className="bg-red-50 p-3 rounded-lg text-xs text-red-600 border border-red-100 mt-2 flex items-start gap-2">
-                        <AlertTriangle size={16} className="shrink-0 mt-0.5" />
-                        <span>Limite de contas atingido. Você já possui {maxSecretaries} secretárias.</span>
-                    </div>
-                )}
-
-                <button 
-                    type="submit" 
-                    disabled={isLimitReached}
-                    className={`w-full py-2.5 rounded-lg font-medium shadow-sm transition-all mt-2 flex justify-center items-center gap-2
-                        ${isLimitReached 
-                            ? 'bg-gray-300 text-gray-500 cursor-not-allowed' 
-                            : 'bg-blue-600 text-white hover:bg-blue-700'
-                        }
-                    `}
-                >
-                <UserPlus size={18} />
-                {isLimitReached ? 'Limite Atingido' : 'Criar Usuário'}
-                </button>
-            </form>
-            </div>
-
-            {/* User List */}
-            <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
-            <div className="flex justify-between items-center mb-4">
-                <h3 className="text-lg font-bold flex items-center gap-2 text-gray-800">
-                <Users size={20} className="text-blue-600" />
-                {currentUser.role === UserRole.OWNER ? 'Contas Ativas' : 'Minha Equipe'}
-                </h3>
-                <span className="bg-blue-100 text-blue-800 text-xs font-bold px-3 py-1 rounded-full">
-                {users.length}
-                </span>
-            </div>
-
-            <div className="space-y-3 max-h-[500px] overflow-y-auto pr-2 custom-scrollbar">
-                {users.length === 0 ? (
-                <div className="text-center py-8">
-                    <p className="text-sm text-gray-400 italic">Nenhum usuário encontrado.</p>
-                </div>
-                ) : (
-                users.map(u => (
-                    <div key={u.id} className="flex items-center justify-between p-3 border border-gray-100 rounded-lg hover:bg-gray-50 transition-colors group">
-                    <div>
-                        <div className="flex items-center gap-2">
-                        <p className="font-semibold text-gray-800">{u.name}</p>
-                        <span className="text-xs text-gray-400">({u.username})</span>
-                        </div>
-                        <p className="text-xs text-gray-500">{u.email}</p>
-                        {u.phone1 && <p className="text-[10px] text-gray-400 mt-1">Tel: {u.phone1} {u.phone2 ? `/ ${u.phone2}` : ''}</p>}
-                        <div className="mt-1">
-                        <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold
-                            ${u.role === UserRole.OWNER ? 'bg-purple-50 text-purple-700' : ''}
-                            ${u.role === UserRole.DOCTOR_ADMIN ? 'bg-blue-50 text-blue-700' : ''}
-                            ${u.role === UserRole.SECRETARY ? 'bg-emerald-50 text-emerald-700' : ''}
-                        `}>
-                            {u.role === UserRole.DOCTOR_ADMIN ? 'MÉDICO ADMIN' : u.role === UserRole.SECRETARY ? 'SECRETÁRIA' : 'DONO'}
-                        </span>
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700">Senha</label>
+                            <div className="relative">
+                            <input
+                                type="text"
+                                required
+                                value={newUser.password}
+                                onChange={e => setNewUser({...newUser, password: e.target.value})}
+                                className="w-full border border-gray-200 bg-white text-gray-900 rounded-lg pl-8 pr-2 py-2 mt-1 focus:ring-2 focus:ring-blue-500 outline-none transition-all placeholder-gray-400"
+                                placeholder="123456"
+                                disabled={isLimitReached}
+                            />
+                            <KeyRound size={14} className="absolute left-2.5 top-4 text-gray-400" />
+                            </div>
                         </div>
                     </div>
                     
-                    {u.id !== currentUser.id && (
-                        <div className="flex items-center gap-2">
-                        <button
-                            onClick={() => { setNewPassword(''); setResetModal({ isOpen: true, user: u }); }}
-                            className="p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
-                            title="Resetar Senha"
-                        >
-                            <RefreshCw size={18} />
-                        </button>
-                        <button
-                            onClick={() => setDeleteModal({ isOpen: true, user: u, doctor: null })}
-                            className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                            title="Excluir Usuário"
-                        >
-                            <Trash2 size={18} />
-                        </button>
+                    {isLimitReached && (
+                        <div className="bg-red-50 p-3 rounded-lg text-xs text-red-600 border border-red-100 mt-2 flex items-start gap-2">
+                            <AlertTriangle size={16} className="shrink-0 mt-0.5" />
+                            <span>Limite de contas atingido. Você já possui {maxSecretaries} secretárias.</span>
                         </div>
                     )}
-                    </div>
-                ))
-                )}
+
+                    <button 
+                        type="submit" 
+                        disabled={isLimitReached}
+                        className={`w-full py-2.5 rounded-lg font-medium shadow-sm transition-all mt-2 flex justify-center items-center gap-2
+                            ${isLimitReached 
+                                ? 'bg-gray-300 text-gray-500 cursor-not-allowed' 
+                                : 'bg-blue-600 text-white hover:bg-blue-700'
+                            }
+                        `}
+                    >
+                    <UserPlus size={18} />
+                    {isLimitReached ? 'Limite Atingido' : 'Criar Usuário'}
+                    </button>
+                </form>
             </div>
+
+            {/* 2. CARD GRID VIEW */}
+            <div>
+                <div className="flex justify-between items-center mb-4">
+                    <h3 className="text-lg font-bold flex items-center gap-2 text-gray-800">
+                    <Users size={20} className="text-blue-600" />
+                    {currentUser.role === UserRole.OWNER ? 'Contas Ativas' : 'Minha Equipe'}
+                    </h3>
+                    <span className="bg-blue-100 text-blue-800 text-xs font-bold px-3 py-1 rounded-full">
+                    {users.length} ativos
+                    </span>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                    {users.length === 0 ? (
+                        <div className="col-span-full text-center py-12 bg-white rounded-xl border border-dashed border-gray-200">
+                            <p className="text-sm text-gray-400 italic">Nenhum usuário encontrado.</p>
+                        </div>
+                    ) : (
+                        users.map(u => {
+                            const userOrg = getUserOrg(u);
+                            return (
+                                <div 
+                                    key={u.id}
+                                    onClick={() => setSelectedUser(u)}
+                                    className="bg-white rounded-xl p-5 shadow-sm border border-gray-200 hover:shadow-md hover:border-blue-300 transition-all cursor-pointer group flex flex-col relative overflow-hidden h-[200px]"
+                                >
+                                    {/* Strip based on Org Type or Role */}
+                                    <div className={`absolute top-0 left-0 w-full h-1.5 ${
+                                        userOrg?.accountType === AccountType.CLINICA ? 'bg-purple-500' :
+                                        userOrg?.accountType === AccountType.CONSULTORIO ? 'bg-blue-500' : 
+                                        'bg-gray-300'
+                                    }`} />
+
+                                    <div className="flex items-start justify-between mb-4 mt-2">
+                                        <div className="flex items-center gap-3 overflow-hidden">
+                                            <div className={`w-12 h-12 rounded-full flex shrink-0 items-center justify-center font-bold text-lg shadow-sm ${
+                                                u.role === UserRole.OWNER ? 'bg-purple-100 text-purple-600' : 
+                                                u.role === UserRole.DOCTOR_ADMIN ? 'bg-blue-100 text-blue-600' : 'bg-emerald-100 text-emerald-600'
+                                            }`}>
+                                                {u.name.charAt(0).toUpperCase()}
+                                            </div>
+                                            <div className="min-w-0">
+                                                {userOrg && (
+                                                    <p className="text-xs text-gray-500 truncate uppercase font-bold tracking-tight">
+                                                        {userOrg.name}
+                                                    </p>
+                                                )}
+                                                <h4 className="font-bold text-gray-900 leading-tight truncate">{u.name}</h4>
+                                            </div>
+                                        </div>
+                                        {userOrg && (
+                                            <span className={`text-[10px] uppercase font-bold tracking-wider px-1.5 py-0.5 rounded border ml-2 whitespace-nowrap ${
+                                                userOrg.accountType === AccountType.CLINICA ? 'bg-purple-50 text-purple-700 border-purple-100' : 'bg-blue-50 text-blue-700 border-blue-100'
+                                            }`}>
+                                                {userOrg.accountType === AccountType.CLINICA ? 'Clínica' : 'Consul.'}
+                                            </span>
+                                        )}
+                                    </div>
+
+                                    <div className="space-y-2 mb-4 flex-1">
+                                        <div className="flex items-center gap-2 text-sm text-gray-600">
+                                            <Mail size={14} className="text-gray-400" />
+                                            <span className="truncate">{u.email}</span>
+                                        </div>
+                                        {userOrg?.subscriptionValue !== undefined && currentUser.role === UserRole.OWNER && (
+                                            <div className="flex items-center gap-2 text-sm text-gray-600">
+                                                <DollarSign size={14} className="text-green-500" />
+                                                <span className="font-medium text-green-700">R$ {userOrg.subscriptionValue.toLocaleString('pt-BR')}/mês</span>
+                                            </div>
+                                        )}
+                                    </div>
+
+                                    <div className="pt-3 border-t border-gray-100 flex justify-between items-center text-xs">
+                                        <span className="text-gray-400">Clique para detalhes</span>
+                                        <span className={`font-bold uppercase ${
+                                            u.role === UserRole.DOCTOR_ADMIN ? 'text-blue-600' : 'text-emerald-600'
+                                        }`}>
+                                            {u.role === UserRole.DOCTOR_ADMIN ? 'Cliente' : 'Equipe'}
+                                        </span>
+                                    </div>
+                                </div>
+                            );
+                        })
+                    )}
+                </div>
             </div>
         </div>
       )}
@@ -547,17 +604,35 @@ const Admin: React.FC<AdminProps> = ({ user: currentUser }) => {
                                 placeholder="Dr. Fulano de Tal"
                             />
                         </div>
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700">Especialidade</label>
-                            <input
-                                type="text"
-                                required
-                                value={newDoctor.specialty}
-                                onChange={e => setNewDoctor({...newDoctor, specialty: e.target.value})}
-                                className="w-full border border-gray-200 bg-white text-gray-900 rounded-lg px-3 py-2 mt-1 focus:ring-2 focus:ring-teal-500 outline-none transition-all placeholder-gray-400"
-                                placeholder="Ex: Cardiologia"
-                            />
+                        
+                        <div className="grid grid-cols-2 gap-4">
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700">Especialidade</label>
+                                <input
+                                    type="text"
+                                    required
+                                    value={newDoctor.specialty}
+                                    onChange={e => setNewDoctor({...newDoctor, specialty: e.target.value})}
+                                    className="w-full border border-gray-200 bg-white text-gray-900 rounded-lg px-3 py-2 mt-1 focus:ring-2 focus:ring-teal-500 outline-none transition-all placeholder-gray-400"
+                                    placeholder="Ex: Cardiologia"
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700">CRM</label>
+                                <div className="relative">
+                                    <input
+                                        type="text"
+                                        required
+                                        value={newDoctor.crm}
+                                        onChange={e => setNewDoctor({...newDoctor, crm: e.target.value})}
+                                        className="w-full border border-gray-200 bg-white text-gray-900 rounded-lg pl-8 pr-3 py-2 mt-1 focus:ring-2 focus:ring-teal-500 outline-none transition-all placeholder-gray-400"
+                                        placeholder="123456-SP"
+                                    />
+                                    <FileBadge size={14} className="absolute left-2.5 top-4 text-gray-400" />
+                                </div>
+                            </div>
                         </div>
+
                         <div>
                              <label className="block text-sm font-medium text-gray-700 mb-1">Cor na Agenda</label>
                              <div className="flex gap-2">
@@ -605,7 +680,7 @@ const Admin: React.FC<AdminProps> = ({ user: currentUser }) => {
                                      </div>
                                      <div>
                                          <p className="font-semibold text-gray-800">{doc.name}</p>
-                                         <p className="text-xs text-gray-500">{doc.specialty}</p>
+                                         <p className="text-xs text-gray-500">{doc.specialty} {doc.crm && `• CRM: ${doc.crm}`}</p>
                                      </div>
                                  </div>
                                  <div className="flex items-center gap-2">
@@ -813,17 +888,126 @@ const Admin: React.FC<AdminProps> = ({ user: currentUser }) => {
             <Automations />
         </div>
       )}
-      
-      {/* --- TAB: AUDIT --- */}
-      {activeTab === 'audit' && (
-        <div className="animate-in fade-in slide-in-from-right-4 duration-300">
-          <ActivityLogs user={currentUser} />
+
+      {/* --- USER DETAIL POP-UP MODAL (Agenda Style) --- */}
+      {selectedUser && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[60] p-4">
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md max-h-[90vh] overflow-y-auto animate-in zoom-in-95 duration-200 flex flex-col">
+                {/* Header */}
+                <div className={`p-6 border-b border-gray-100 flex justify-between items-start bg-gradient-to-br ${
+                    selectedUser.role === UserRole.OWNER ? 'from-purple-50 to-white' : 
+                    selectedUser.role === UserRole.DOCTOR_ADMIN ? 'from-blue-50 to-white' : 'from-emerald-50 to-white'
+                }`}>
+                    <div className="flex gap-4">
+                        <div className={`w-16 h-16 rounded-full flex items-center justify-center font-bold text-2xl shadow-inner ${
+                            selectedUser.role === UserRole.OWNER ? 'bg-purple-100 text-purple-600' : 
+                            selectedUser.role === UserRole.DOCTOR_ADMIN ? 'bg-blue-100 text-blue-600' : 'bg-emerald-100 text-emerald-600'
+                        }`}>
+                            {selectedUser.name.charAt(0).toUpperCase()}
+                        </div>
+                        <div>
+                            <h3 className="text-xl font-bold text-gray-900 mt-1">{selectedUser.name}</h3>
+                            <div className="flex gap-2 flex-wrap">
+                                <span className={`text-xs font-bold uppercase tracking-wide px-2 py-0.5 rounded border mt-1 inline-block ${getRoleColor(selectedUser.role)}`}>
+                                    {selectedUser.role === UserRole.DOCTOR_ADMIN ? 'Cliente (Médico)' : selectedUser.role === UserRole.SECRETARY ? 'Secretária' : 'Admin'}
+                                </span>
+                                {getUserOrg(selectedUser) && (
+                                    <span className="text-xs font-bold uppercase tracking-wide px-2 py-0.5 rounded border mt-1 inline-block bg-gray-100 text-gray-600 border-gray-200">
+                                        {getUserOrg(selectedUser)?.accountType}
+                                    </span>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+                    <button onClick={() => setSelectedUser(null)} className="p-2 bg-white rounded-full text-gray-400 hover:text-gray-600 shadow-sm border border-gray-100">
+                        <X size={20} />
+                    </button>
+                </div>
+
+                {/* Body */}
+                <div className="p-6 space-y-4 flex-1 overflow-y-auto">
+                    {/* Organization Info Block */}
+                    {getUserOrg(selectedUser) && (
+                        <div className="bg-gradient-to-r from-blue-50 to-indigo-50 p-4 rounded-xl border border-blue-100 mb-2">
+                            <h4 className="text-xs font-bold text-blue-800 uppercase flex items-center gap-2 mb-2">
+                                <Building2 size={14} /> Detalhes do Contrato
+                            </h4>
+                            <div className="space-y-1">
+                                <div className="flex justify-between text-sm">
+                                    <span className="text-gray-500">Estabelecimento:</span>
+                                    <span className="font-bold text-gray-800">{getUserOrg(selectedUser)?.name}</span>
+                                </div>
+                                <div className="flex justify-between text-sm">
+                                    <span className="text-gray-500">Mensalidade (MRR):</span>
+                                    <span className="font-bold text-green-600">R$ {getUserOrg(selectedUser)?.subscriptionValue?.toLocaleString('pt-BR') || '0,00'}</span>
+                                </div>
+                                <div className="flex justify-between text-sm">
+                                    <span className="text-gray-500">Limite de Médicos:</span>
+                                    <span className="font-bold text-gray-800">{getUserOrg(selectedUser)?.maxDoctors}</span>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    <div className="grid grid-cols-1 gap-4">
+                        <div className="bg-gray-50 p-3 rounded-xl border border-gray-100">
+                            <label className="text-xs font-bold text-gray-400 uppercase block mb-1">Acesso (Login)</label>
+                            <div className="flex items-center gap-2 font-medium text-gray-800">
+                                <KeyRound size={16} className="text-gray-400" />
+                                {selectedUser.username}
+                            </div>
+                        </div>
+                        
+                        <div className="bg-gray-50 p-3 rounded-xl border border-gray-100">
+                            <label className="text-xs font-bold text-gray-400 uppercase block mb-1">Contato</label>
+                            <div className="space-y-2">
+                                <div className="flex items-center gap-2 text-sm text-gray-700">
+                                    <Mail size={16} className="text-gray-400" />
+                                    {selectedUser.email}
+                                </div>
+                                {(selectedUser.phone1 || selectedUser.phone2) && (
+                                    <div className="flex items-center gap-2 text-sm text-gray-700">
+                                        <Phone size={16} className="text-gray-400" />
+                                        <span>{selectedUser.phone1} {selectedUser.phone2 ? `/ ${selectedUser.phone2}` : ''}</span>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                {/* Footer Actions */}
+                <div className="p-6 border-t border-gray-100 bg-gray-50/50 flex gap-3">
+                    {selectedUser.id !== currentUser.id ? (
+                        <>
+                            <button 
+                                onClick={() => { setNewPassword(''); setResetModal({ isOpen: true, user: selectedUser }); }}
+                                className="flex-1 py-3 bg-white border border-gray-200 text-gray-700 hover:bg-gray-50 rounded-xl font-medium shadow-sm flex items-center justify-center gap-2 transition-colors"
+                            >
+                                <RefreshCw size={18} />
+                                Resetar Senha
+                            </button>
+                            <button 
+                                onClick={() => setDeleteModal({ isOpen: true, user: selectedUser, doctor: null })}
+                                className="flex-1 py-3 bg-red-50 border border-red-100 text-red-600 hover:bg-red-100 rounded-xl font-medium shadow-sm flex items-center justify-center gap-2 transition-colors"
+                            >
+                                <Trash2 size={18} />
+                                Excluir
+                            </button>
+                        </>
+                    ) : (
+                        <div className="w-full text-center text-sm text-gray-500 italic py-2">
+                            Você não pode excluir sua própria conta aqui.
+                        </div>
+                    )}
+                </div>
+            </div>
         </div>
       )}
 
-      {/* --- DELETE MODAL --- */}
+      {/* --- DELETE CONFIRMATION MODAL --- */}
       {deleteModal.isOpen && (deleteModal.user || deleteModal.doctor) && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[70] p-4">
           <div className="bg-white rounded-2xl shadow-xl max-w-sm w-full p-6 animate-in fade-in zoom-in duration-200">
             <div className="w-12 h-12 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
               <AlertTriangle size={24} className="text-red-600" />
@@ -854,7 +1038,7 @@ const Admin: React.FC<AdminProps> = ({ user: currentUser }) => {
 
       {/* --- RESET PASSWORD MODAL --- */}
       {resetModal.isOpen && resetModal.user && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[70] p-4">
           <div className="bg-white rounded-2xl shadow-xl max-w-sm w-full p-6 animate-in fade-in zoom-in duration-200">
             <div className="flex justify-between items-center mb-4">
               <h3 className="text-lg font-bold text-gray-900">Nova Senha</h3>

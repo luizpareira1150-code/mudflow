@@ -1,8 +1,18 @@
+
 import { Patient, PatientStatus, AuditAction, AuditSource } from '../types';
 import { STORAGE_KEYS, getStorage, setStorage, delay, initialPatients } from './storage';
 import { systemLogService } from './auditService';
 import { normalizeCPF } from '../utils/cpfUtils';
 import { normalizePhone } from '../utils/phoneUtils';
+import { socketServer, SocketEvent } from '../lib/socketServer';
+
+// Helper to avoid circular dependency
+const getCurrentUserId = () => {
+    try {
+        const stored = localStorage.getItem(STORAGE_KEYS.CURRENT_USER);
+        return stored ? JSON.parse(stored).id : 'system';
+    } catch { return 'system'; }
+};
 
 export const patientService = {
   getAllPatients: async (clinicId: string): Promise<Patient[]> => {
@@ -46,6 +56,14 @@ export const patientService = {
         entityName: newPatient.name,
         description: `Cadastrou novo paciente: ${newPatient.name}`
       });
+
+      // ✅ WEBSOCKET EMIT
+      socketServer.emit(
+        SocketEvent.PATIENT_CREATED,
+        newPatient,
+        patient.organizationId,
+        getCurrentUserId()
+      );
       
       return newPatient;
   },
@@ -70,6 +88,14 @@ export const patientService = {
         newValues: updates as any,
         source: AuditSource.WEB_APP
       });
+
+      // ✅ WEBSOCKET EMIT
+      socketServer.emit(
+        SocketEvent.PATIENT_UPDATED,
+        patients[index],
+        patients[index].organizationId,
+        getCurrentUserId()
+      );
 
       return patients[index];
   },
