@@ -1,7 +1,9 @@
 
 import React, { useState, useEffect } from 'react';
-import { User, DashboardMetrics, AccountType, Organization } from '../types';
+import { User, DashboardMetrics, AccountType, Organization, Appointment } from '../types';
 import { dataService } from '../services/mockSupabase';
+import { appointmentService } from '../services/appointmentService'; // Direct service import for analysis
+import { analyzeRecoveryTrend } from '../services/geminiService';
 import { 
   TrendingUp, 
   TrendingDown, 
@@ -17,7 +19,9 @@ import {
   Target,
   Bot,
   MessageSquare,
-  ArrowRight
+  ArrowRight,
+  Sparkles,
+  Lightbulb
 } from 'lucide-react';
 
 interface MetricsDashboardProps {
@@ -29,10 +33,49 @@ export const MetricsDashboard: React.FC<MetricsDashboardProps> = ({ user, organi
   const [metrics, setMetrics] = useState<DashboardMetrics | null>(null);
   const [loading, setLoading] = useState(true);
   const [period, setPeriod] = useState<'week' | 'month' | 'all'>('month');
+  
+  // AI Insight State
+  const [aiInsight, setAiInsight] = useState<string>("Analisando dados dos últimos 30 dias...");
+  const [aiLoading, setAiLoading] = useState(true);
 
   useEffect(() => {
     loadMetrics();
   }, [user.clinicId, period]);
+
+  // AI Analysis Effect (Independent 30-Day Window)
+  useEffect(() => {
+    const generateAnalysis = async () => {
+        setAiLoading(true);
+        try {
+            // Calculate date range: Today - 30 days
+            const today = new Date();
+            const past = new Date();
+            past.setDate(today.getDate() - 30);
+            
+            const endDate = today.toISOString().split('T')[0];
+            const startDate = past.toISOString().split('T')[0];
+
+            // Fetch historical data directly from service
+            const historicalAppts = await appointmentService.getAppointmentsInRange(user.clinicId, startDate, endDate);
+            
+            if (historicalAppts.length > 5) { // Minimum threshold for analysis
+                const insight = await analyzeRecoveryTrend(historicalAppts);
+                setAiInsight(insight);
+            } else {
+                setAiInsight("Aguardando acumular mais histórico (mínimo 5 agendamentos) para gerar análises operacionais confiáveis.");
+            }
+        } catch (err) {
+            console.error("AI Analysis failed:", err);
+            setAiInsight("Não foi possível gerar a análise no momento.");
+        } finally {
+            setAiLoading(false);
+        }
+    };
+
+    // Small delay to prioritize UI rendering
+    const timer = setTimeout(generateAnalysis, 1000);
+    return () => clearTimeout(timer);
+  }, [user.clinicId]);
 
   const loadMetrics = async () => {
     setLoading(true);
@@ -346,6 +389,44 @@ export const MetricsDashboard: React.FC<MetricsDashboardProps> = ({ user, organi
             })}
             </div>
         </div>
+      </div>
+
+      {/* AI Operational Insights Section - Bottom of Page */}
+      <div className="mt-8 bg-gradient-to-br from-indigo-50 via-white to-blue-50 p-8 rounded-2xl border border-indigo-100 shadow-sm transition-all hover:shadow-md relative overflow-hidden">
+         {/* Decorative Background Element */}
+         <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-100 rounded-full mix-blend-multiply filter blur-3xl opacity-30 -translate-y-1/2 translate-x-1/2"></div>
+         
+         <div className="flex items-start gap-5 relative z-10">
+             <div className="bg-white p-3.5 rounded-2xl shadow-sm border border-indigo-50 shrink-0">
+                 <Sparkles className="text-indigo-600" size={28} />
+             </div>
+             <div className="flex-1">
+                 <div className="flex items-center gap-3 mb-3">
+                    <h4 className="text-indigo-900 font-bold text-xl tracking-tight">
+                        INSIGHTS OPERACIONAIS (IA)
+                    </h4>
+                    <span className="text-[10px] font-bold bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full border border-indigo-200 uppercase tracking-wide">
+                        Beta • Mensal
+                    </span>
+                 </div>
+                 
+                 <div className="text-slate-700 text-sm leading-relaxed whitespace-pre-line bg-white/60 p-4 rounded-xl border border-indigo-50/50">
+                     {aiLoading ? (
+                         <div className="flex items-center gap-2 text-indigo-500">
+                             <div className="w-4 h-4 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
+                             Processando últimos 30 dias...
+                         </div>
+                     ) : (
+                         aiInsight
+                     )}
+                 </div>
+
+                 <div className="mt-4 flex items-center gap-2 text-xs text-indigo-400">
+                    <Lightbulb size={12} />
+                    <span>Dica gerada com base nos padrões de agendamento dos últimos 30 dias.</span>
+                 </div>
+             </div>
+         </div>
       </div>
     </div>
   );

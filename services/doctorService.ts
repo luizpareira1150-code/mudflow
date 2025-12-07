@@ -1,4 +1,3 @@
-
 import { Doctor, Organization, User, UserRole, AuditAction, AuditSource } from '../types';
 import { STORAGE_KEYS, getStorage, setStorage, delay, initialDoctors, initialOrganizations, initialUsers, StoredUser } from './storage';
 import { systemLogService } from './auditService';
@@ -163,6 +162,52 @@ export const doctorService = {
         getCurrentUserId()
       );
 
+      return safeUser;
+  },
+
+  updateUser: async (userId: string, updates: Partial<User> & { password?: string }): Promise<User> => {
+      await delay(300);
+      const users = getStorage<StoredUser[]>(STORAGE_KEYS.USERS, initialUsers);
+      const index = users.findIndex(u => u.id === userId);
+      
+      if (index === -1) throw new Error("Usuário não encontrado.");
+
+      // Check unique username if changing
+      if (updates.username && updates.username !== users[index].username) {
+          if (users.some(u => u.username === updates.username && u.id !== userId)) {
+              throw new Error("Este nome de usuário já está em uso.");
+          }
+      }
+
+      const updatedUser = { ...users[index], ...updates };
+
+      // Handle password hashing if provided
+      if (updates.password) {
+          updatedUser.passwordHash = await passwordService.hashPassword(updates.password);
+          delete (updatedUser as any).password; // Ensure raw password doesn't stick
+      }
+
+      users[index] = updatedUser;
+      setStorage(STORAGE_KEYS.USERS, users);
+
+      // If updating self, update session storage
+      const currentUser = JSON.parse(localStorage.getItem(STORAGE_KEYS.CURRENT_USER) || '{}');
+      if (currentUser.id === userId) {
+          const { passwordHash, ...safeSessionUser } = updatedUser;
+          localStorage.setItem(STORAGE_KEYS.CURRENT_USER, JSON.stringify(safeSessionUser));
+      }
+
+      systemLogService.createLog({
+          organizationId: updatedUser.clinicId,
+          action: AuditAction.USER_CREATED, // Reuse or add UPDATED
+          entityType: 'User',
+          entityId: updatedUser.id,
+          entityName: updatedUser.name,
+          description: `Atualizou perfil do usuário: ${updatedUser.name}`,
+          source: AuditSource.WEB_APP
+      });
+
+      const { passwordHash, ...safeUser } = updatedUser;
       return safeUser;
   },
 

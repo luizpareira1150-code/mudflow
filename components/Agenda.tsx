@@ -10,6 +10,7 @@ import { DoctorAvailabilityConfig } from './DoctorAvailabilityConfig';
 import { useRealtimeData } from '../hooks/useRealtimeData';
 import { SocketEvent } from '../lib/socketServer';
 import { RealtimeIndicator } from './RealtimeIndicator';
+import { BlockScheduleModal } from './BlockScheduleModal';
 
 interface AgendaProps {
   user: User;
@@ -81,6 +82,9 @@ export const Agenda: React.FC<AgendaProps> = ({
 
   // Config Modal
   const [isConfigOpen, setIsConfigOpen] = useState(false);
+  
+  // Block Schedule Modal
+  const [isBlockModalOpen, setIsBlockModalOpen] = useState(false);
 
   // Fetch doctors if uncontrolled
   useEffect(() => {
@@ -234,47 +238,72 @@ export const Agenda: React.FC<AgendaProps> = ({
         <div>
           <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-1">Agenda Médica</h2>
           
-          <div className="flex items-center gap-2">
-             {!isConsultorio ? (
-                 <div className="relative group">
-                    <select
-                        value={selectedDoctorId}
-                        onChange={(e) => onDoctorChange(e.target.value)}
-                        className="pr-10 py-1 bg-transparent border-none p-0 text-3xl font-bold text-slate-800 outline-none focus:ring-0 appearance-none min-w-[200px] cursor-pointer hover:text-blue-600 transition-colors"
-                        style={{ backgroundImage: 'none' }}
-                    >
-                        {doctors.map(doc => (
-                            <option key={doc.id} value={doc.id} className="text-lg text-slate-800">{doc.name}</option>
-                        ))}
-                    </select>
-                    <ChevronDown size={28} className="absolute right-0 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none group-hover:text-blue-500 transition-colors" />
-                 </div>
-             ) : (
-                 <div className="text-3xl font-bold text-slate-800 py-1">
-                    {currentDoctor?.name || 'Meu Consultório'}
-                 </div>
-             )}
+          <div className="flex items-start gap-3">
+             <div className="flex flex-col">
+                {!isConsultorio ? (
+                    <div className="relative group">
+                        <select
+                            value={selectedDoctorId}
+                            onChange={(e) => onDoctorChange(e.target.value)}
+                            className="pr-10 py-0 bg-transparent border-none p-0 text-2xl font-bold text-slate-800 outline-none focus:ring-0 appearance-none min-w-[200px] cursor-pointer hover:text-blue-600 transition-colors"
+                            style={{ backgroundImage: 'none' }}
+                        >
+                            {doctors.map(doc => (
+                                <option key={doc.id} value={doc.id} className="text-lg text-slate-800">
+                                    {doc.name} - {doc.specialty}
+                                </option>
+                            ))}
+                        </select>
+                        <ChevronDown size={24} className="absolute right-0 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none group-hover:text-blue-50 transition-colors" />
+                    </div>
+                ) : (
+                    <div className="text-2xl font-bold text-slate-800 py-0">
+                        {currentDoctor?.name || 'Meu Consultório'}
+                    </div>
+                )}
+                {/* Specialty Display */}
+                <span className="text-sm font-medium text-blue-600 mt-0.5">
+                    {currentDoctor?.specialty || 'Especialidade não definida'}
+                </span>
+             </div>
 
-             <span className="text-gray-300 text-3xl font-light mx-2">|</span>
-             <p className="text-sm text-gray-500 self-center pt-2">
-                Intervalo: <span className="font-medium text-gray-700">{formatDuration(config.intervalMinutes)}</span>
-             </p>
+             <span className="text-gray-300 text-3xl font-light mx-2 self-start mt-1">|</span>
+             
+             <div className="flex flex-col gap-1 mt-1 self-start">
+                <div className="flex items-baseline gap-1.5">
+                    <span className="text-[10px] text-gray-400 uppercase font-medium">Intervalo:</span>
+                    <span className="text-sm text-gray-700">{formatDuration(config.intervalMinutes)}</span>
+                </div>
+                <div className="-ml-1 origin-left scale-90">
+                    <RealtimeIndicator className="py-0.5 px-2 text-[10px]" />
+                </div>
+             </div>
           </div>
         </div>
         
         <div className="flex items-center gap-3">
-          <RealtimeIndicator />
           <div className="w-40">
             <DatePicker value={selectedDate} onChange={setSelectedDate} />
           </div>
           
-          <button 
-            onClick={() => setIsConfigOpen(true)}
-            className="px-4 py-2 bg-white border border-gray-200 text-gray-700 rounded-lg hover:border-blue-400 hover:text-blue-600 font-medium text-sm h-[42px] flex items-center gap-2 shadow-sm"
-          >
-            <Settings size={18} />
-            <span className="hidden sm:inline">Configurar Agenda</span>
-          </button>
+          <div className="flex items-center gap-2">
+            <button 
+                onClick={() => setIsBlockModalOpen(true)}
+                className="px-4 py-2 bg-white border border-gray-200 text-red-600 rounded-lg hover:border-red-300 hover:bg-red-50 font-medium text-sm h-[42px] flex items-center gap-2 shadow-sm transition-colors"
+                title="Fechar Horários"
+            >
+                <Lock size={18} />
+                <span className="hidden sm:inline">Bloquear</span>
+            </button>
+
+            <button 
+                onClick={() => setIsConfigOpen(true)}
+                className="px-4 py-2 bg-white border border-gray-200 text-gray-700 rounded-lg hover:border-blue-400 hover:text-blue-600 font-medium text-sm h-[42px] flex items-center gap-2 shadow-sm transition-colors"
+            >
+                <Settings size={18} />
+                <span className="hidden sm:inline">Configurar</span>
+            </button>
+          </div>
         </div>
       </div>
 
@@ -425,6 +454,17 @@ export const Agenda: React.FC<AgendaProps> = ({
         preSelectedDoctorId={selectedDoctorId}
       />
 
+      {/* Block Schedule Modal */}
+      <BlockScheduleModal
+        isOpen={isBlockModalOpen}
+        onClose={() => setIsBlockModalOpen(false)}
+        onSuccess={() => { /* Realtime hook handles refresh */ }}
+        user={user}
+        doctors={doctors}
+        preSelectedDate={selectedDate}
+        preSelectedDoctorId={selectedDoctorId}
+      />
+
       {/* Details Modal */}
       {isDetailsModalOpen && selectedAppointment && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
@@ -449,19 +489,18 @@ export const Agenda: React.FC<AgendaProps> = ({
                 </div>
 
                 <div className="space-y-6 mb-6">
-                    <div className="flex items-start gap-4">
-                        <div className="bg-blue-50 p-2 rounded-lg text-blue-600 mt-1">
-                            <UserIcon size={20} />
+                    {/* Patient Name Section */}
+                    {selectedAppointment.status !== AppointmentStatus.BLOQUEADO && (
+                        <div className="flex items-start gap-4">
+                            <div className="bg-blue-50 p-2 rounded-lg text-blue-600 mt-1">
+                                <UserIcon size={20} />
+                            </div>
+                            <div>
+                                <h4 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Paciente</h4>
+                                <p className="text-lg font-semibold text-gray-900">{selectedAppointment.patient?.name || 'Paciente'}</p>
+                            </div>
                         </div>
-                        <div>
-                            <h4 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Paciente</h4>
-                            <p className="text-lg font-semibold text-gray-900">
-                                {selectedAppointment.status === AppointmentStatus.BLOQUEADO 
-                                    ? 'Bloqueio de Agenda' 
-                                    : (selectedAppointment.patient?.name || 'Paciente não encontrado')}
-                            </p>
-                        </div>
-                    </div>
+                    )}
 
                     {selectedAppointment.patient?.phone && (
                         <div className="flex items-start gap-4">

@@ -1,11 +1,12 @@
 
-
 import React, { useState, useEffect } from 'react';
 import { Doctor, DoctorAvailability, DoctorAbsence, DayOfWeek, AgendaReleaseType } from '../types';
 import { doctorAvailabilityService } from '../services/doctorAvailabilityService';
 import { agendaReleaseService } from '../services/agendaReleaseService';
-import { Clock, X, Plus, Trash2, AlertCircle, Save, Settings, CalendarOff, AlertTriangle, Calendar } from 'lucide-react';
+import { authService, settingsService } from '../services/mockSupabase';
+import { Clock, X, Plus, Trash2, AlertCircle, Save, Settings, CalendarOff, AlertTriangle, Calendar, Info, ChevronDown, ShieldCheck } from 'lucide-react';
 import { useToast } from './ToastProvider';
+import { DatePicker } from './DatePicker';
 
 interface DoctorAvailabilityConfigProps {
   doctor: Doctor;
@@ -20,11 +21,16 @@ export const DoctorAvailabilityConfig: React.FC<DoctorAvailabilityConfigProps> =
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   
+  // Security State
+  const [isSecurityModalOpen, setIsSecurityModalOpen] = useState(false);
+  const [securityPassword, setSecurityPassword] = useState('');
+
   // State: Availability
   const [weekSchedule, setWeekSchedule] = useState(doctorAvailabilityService.getDefaultAvailability());
   const [absences, setAbsences] = useState<DoctorAbsence[]>([]);
   const [advanceBookingDays, setAdvanceBookingDays] = useState(30);
   const [maxAppointmentsPerDay, setMaxAppointmentsPerDay] = useState<number | undefined>();
+  const [intervalMinutes, setIntervalMinutes] = useState(30);
 
   // State: Release Rules
   const [releaseType, setReleaseType] = useState<AgendaReleaseType>(AgendaReleaseType.ALWAYS_OPEN);
@@ -33,8 +39,8 @@ export const DoctorAvailabilityConfig: React.FC<DoctorAvailabilityConfigProps> =
 
   // New Absence Form State
   const [newAbsence, setNewAbsence] = useState({
-    startDate: '',
-    endDate: '',
+    startDate: new Date().toISOString().split('T')[0],
+    endDate: new Date().toISOString().split('T')[0],
     reason: '',
     type: 'FERIAS' as DoctorAbsence['type']
   });
@@ -49,6 +55,18 @@ export const DoctorAvailabilityConfig: React.FC<DoctorAvailabilityConfigProps> =
     { key: DayOfWeek.SUNDAY, label: 'Domingo' },
   ];
 
+  const intervalOptions = [
+    { value: 10, label: '10 minutos' },
+    { value: 15, label: '15 minutos' },
+    { value: 20, label: '20 minutos' },
+    { value: 30, label: '30 minutos (Padrão)' },
+    { value: 40, label: '40 minutos' },
+    { value: 45, label: '45 minutos' },
+    { value: 60, label: '1 hora' },
+    { value: 90, label: '1 hora e 30 min' },
+    { value: 120, label: '2 horas' },
+  ];
+
   useEffect(() => {
     loadAvailability();
   }, [doctor.id]);
@@ -56,9 +74,10 @@ export const DoctorAvailabilityConfig: React.FC<DoctorAvailabilityConfigProps> =
   const loadAvailability = async () => {
     setLoading(true);
     try {
-      const [availability, releaseSchedule] = await Promise.all([
+      const [availability, releaseSchedule, agendaConfig] = await Promise.all([
           doctorAvailabilityService.getDoctorAvailability(doctor.id, doctor.organizationId),
-          agendaReleaseService.getSchedule(doctor.id, doctor.organizationId)
+          agendaReleaseService.getSchedule(doctor.id, doctor.organizationId),
+          settingsService.getAgendaConfig(doctor.organizationId, doctor.id)
       ]);
 
       if (availability) {
@@ -80,6 +99,10 @@ export const DoctorAvailabilityConfig: React.FC<DoctorAvailabilityConfigProps> =
           if (releaseSchedule.monthlyConfig) setMonthlyRelease(releaseSchedule.monthlyConfig);
       }
 
+      if (agendaConfig) {
+          setIntervalMinutes(agendaConfig.intervalMinutes);
+      }
+
     } catch (error) {
       console.error(error);
       showToast('error', 'Erro ao carregar configurações.');
@@ -88,9 +111,25 @@ export const DoctorAvailabilityConfig: React.FC<DoctorAvailabilityConfigProps> =
     }
   };
 
-  const handleSave = async () => {
+  const initiateSave = () => {
+    setSecurityPassword('');
+    setIsSecurityModalOpen(true);
+  };
+
+  const confirmSave = async (e: React.FormEvent) => {
+    e.preventDefault();
     setSaving(true);
+    
     try {
+      // 1. Verify Password
+      const isValid = await authService.verifyPassword(securityPassword);
+      if (!isValid) {
+          showToast('error', 'Senha incorreta. Alterações não salvas.');
+          setSaving(false);
+          return;
+      }
+
+      // 2. Perform Save
       await doctorAvailabilityService.saveDoctorAvailability({
         doctorId: doctor.id,
         organizationId: doctor.organizationId,
@@ -109,6 +148,14 @@ export const DoctorAvailabilityConfig: React.FC<DoctorAvailabilityConfigProps> =
         enabled: releaseType !== AgendaReleaseType.ALWAYS_OPEN
       });
 
+      // Save Interval
+      const currentConfig = await settingsService.getAgendaConfig(doctor.organizationId, doctor.id);
+      await settingsService.updateAgendaConfig({
+          ...currentConfig,
+          intervalMinutes: intervalMinutes
+      });
+
+      setIsSecurityModalOpen(false);
       showToast('success', 'Configurações salvas com sucesso!');
       onClose();
     } catch (error) {
@@ -162,7 +209,12 @@ export const DoctorAvailabilityConfig: React.FC<DoctorAvailabilityConfigProps> =
     };
 
     setAbsences([...absences, absence]);
-    setNewAbsence({ startDate: '', endDate: '', reason: '', type: 'FERIAS' });
+    setNewAbsence({ 
+      startDate: new Date().toISOString().split('T')[0], 
+      endDate: new Date().toISOString().split('T')[0], 
+      reason: '', 
+      type: 'FERIAS' 
+    });
     showToast('success', 'Período adicionado à lista (Salvar para confirmar)');
   };
 
@@ -171,7 +223,7 @@ export const DoctorAvailabilityConfig: React.FC<DoctorAvailabilityConfigProps> =
   };
 
   return (
-    <div className="bg-white rounded-2xl shadow-2xl w-full h-full flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+    <div className="bg-white rounded-2xl shadow-2xl w-full h-full flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200 relative">
       
       {/* Header */}
       <div className="flex justify-between items-center p-6 border-b border-gray-100 bg-gray-50/50">
@@ -320,48 +372,49 @@ export const DoctorAvailabilityConfig: React.FC<DoctorAvailabilityConfigProps> =
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
                                 <div>
                                     <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Data Início</label>
-                                    <input 
-                                        type="date" 
+                                    <DatePicker 
                                         value={newAbsence.startDate}
-                                        onChange={e => setNewAbsence({...newAbsence, startDate: e.target.value})}
-                                        className="w-full border border-gray-200 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-blue-500"
+                                        onChange={date => setNewAbsence({...newAbsence, startDate: date})}
                                     />
                                 </div>
                                 <div>
                                     <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Data Fim</label>
-                                    <input 
-                                        type="date" 
+                                    <DatePicker 
                                         value={newAbsence.endDate}
-                                        onChange={e => setNewAbsence({...newAbsence, endDate: e.target.value})}
-                                        className="w-full border border-gray-200 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-blue-500"
+                                        onChange={date => setNewAbsence({...newAbsence, endDate: date})}
                                     />
                                 </div>
                                 <div className="md:col-span-2">
                                     <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Motivo</label>
                                     <div className="flex gap-2">
-                                        <select
-                                            value={newAbsence.type}
-                                            onChange={e => setNewAbsence({...newAbsence, type: e.target.value as any})}
-                                            className="w-32 border border-gray-200 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-blue-500 bg-white"
-                                        >
-                                            <option value="FERIAS">Férias</option>
-                                            <option value="LICENCA">Licença</option>
-                                            <option value="CONGRESSO">Congresso</option>
-                                            <option value="OUTROS">Outros</option>
-                                        </select>
+                                        <div className="relative w-32">
+                                            <div className="relative">
+                                                <select
+                                                    value={newAbsence.type}
+                                                    onChange={e => setNewAbsence({...newAbsence, type: e.target.value as any})}
+                                                    className="w-full border border-gray-200 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-blue-500 bg-white appearance-none"
+                                                >
+                                                    <option value="FERIAS">Férias</option>
+                                                    <option value="LICENCA">Licença</option>
+                                                    <option value="CONGRESSO">Congresso</option>
+                                                    <option value="OUTROS">Outros</option>
+                                                </select>
+                                                <ChevronDown size={14} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+                                            </div>
+                                        </div>
                                         <input 
                                             type="text" 
                                             placeholder="Ex: Viagem anual..."
                                             value={newAbsence.reason}
                                             onChange={e => setNewAbsence({...newAbsence, reason: e.target.value})}
-                                            className="flex-1 border border-gray-200 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-blue-500"
+                                            className="flex-1 border border-gray-200 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-blue-500 bg-white appearance-none"
                                         />
                                     </div>
                                 </div>
                             </div>
                             <button 
                                 onClick={handleAddAbsence}
-                                className="w-full py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg font-medium transition-colors flex items-center justify-center gap-2"
+                                className="w-full py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-colors flex items-center justify-center gap-2 shadow-sm"
                             >
                                 Adicionar à Lista
                             </button>
@@ -420,15 +473,20 @@ export const DoctorAvailabilityConfig: React.FC<DoctorAvailabilityConfigProps> =
                             <div className="space-y-4">
                                 <div>
                                     <label className="block text-sm font-medium text-gray-700 mb-2">Tipo de Abertura</label>
-                                    <select
-                                        value={releaseType}
-                                        onChange={(e) => setReleaseType(e.target.value as AgendaReleaseType)}
-                                        className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-green-500 outline-none"
-                                    >
-                                        <option value={AgendaReleaseType.ALWAYS_OPEN}>Sempre Aberta (Padrão)</option>
-                                        <option value={AgendaReleaseType.WEEKLY_RELEASE}>Abertura Semanal</option>
-                                        <option value={AgendaReleaseType.MONTHLY_RELEASE}>Abertura Mensal</option>
-                                    </select>
+                                    <div className="relative">
+                                        <div className="relative">
+                                            <select
+                                                value={releaseType}
+                                                onChange={(e) => setReleaseType(e.target.value as AgendaReleaseType)}
+                                                className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-green-500 outline-none bg-white text-gray-900 appearance-none pr-10"
+                                            >
+                                                <option value={AgendaReleaseType.ALWAYS_OPEN}>Sempre Aberta (Padrão)</option>
+                                                <option value={AgendaReleaseType.WEEKLY_RELEASE}>Abertura Semanal</option>
+                                                <option value={AgendaReleaseType.MONTHLY_RELEASE}>Abertura Mensal</option>
+                                            </select>
+                                            <ChevronDown size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 pointer-events-none" />
+                                        </div>
+                                    </div>
                                 </div>
 
                                 {releaseType === AgendaReleaseType.WEEKLY_RELEASE && (
@@ -440,19 +498,22 @@ export const DoctorAvailabilityConfig: React.FC<DoctorAvailabilityConfigProps> =
                                         <div className="grid grid-cols-3 gap-3">
                                             <div>
                                                 <label className="block text-xs font-bold text-gray-600 mb-1">Dia de Abertura</label>
-                                                <select
-                                                    value={weeklyRelease.dayOfWeek}
-                                                    onChange={(e) => setWeeklyRelease({...weeklyRelease, dayOfWeek: Number(e.target.value)})}
-                                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white"
-                                                >
-                                                    <option value={DayOfWeek.SUNDAY}>Domingo</option>
-                                                    <option value={DayOfWeek.MONDAY}>Segunda</option>
-                                                    <option value={DayOfWeek.TUESDAY}>Terça</option>
-                                                    <option value={DayOfWeek.WEDNESDAY}>Quarta</option>
-                                                    <option value={DayOfWeek.THURSDAY}>Quinta</option>
-                                                    <option value={DayOfWeek.FRIDAY}>Sexta</option>
-                                                    <option value={DayOfWeek.SATURDAY}>Sábado</option>
-                                                </select>
+                                                <div className="relative">
+                                                    <select
+                                                        value={weeklyRelease.dayOfWeek}
+                                                        onChange={(e) => setWeeklyRelease({...weeklyRelease, dayOfWeek: Number(e.target.value)})}
+                                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white text-gray-900 appearance-none pr-10"
+                                                    >
+                                                        <option value={DayOfWeek.SUNDAY}>Domingo</option>
+                                                        <option value={DayOfWeek.MONDAY}>Segunda</option>
+                                                        <option value={DayOfWeek.TUESDAY}>Terça</option>
+                                                        <option value={DayOfWeek.WEDNESDAY}>Quarta</option>
+                                                        <option value={DayOfWeek.THURSDAY}>Quinta</option>
+                                                        <option value={DayOfWeek.FRIDAY}>Sexta</option>
+                                                        <option value={DayOfWeek.SATURDAY}>Sábado</option>
+                                                    </select>
+                                                    <ChevronDown size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 pointer-events-none" />
+                                                </div>
                                             </div>
                                             
                                             <div>
@@ -461,7 +522,7 @@ export const DoctorAvailabilityConfig: React.FC<DoctorAvailabilityConfigProps> =
                                                     type="time"
                                                     value={weeklyRelease.hour}
                                                     onChange={(e) => setWeeklyRelease({...weeklyRelease, hour: e.target.value})}
-                                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white text-gray-900"
                                                 />
                                             </div>
                                             
@@ -471,7 +532,7 @@ export const DoctorAvailabilityConfig: React.FC<DoctorAvailabilityConfigProps> =
                                                     type="number"
                                                     value={weeklyRelease.advanceDays}
                                                     onChange={(e) => setWeeklyRelease({...weeklyRelease, advanceDays: Number(e.target.value)})}
-                                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white text-gray-900"
                                                     min="1"
                                                     max="60"
                                                 />
@@ -493,7 +554,7 @@ export const DoctorAvailabilityConfig: React.FC<DoctorAvailabilityConfigProps> =
                                                     type="number"
                                                     value={monthlyRelease.releaseDay}
                                                     onChange={(e) => setMonthlyRelease({...monthlyRelease, releaseDay: Number(e.target.value)})}
-                                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white text-gray-900"
                                                     min="1"
                                                     max="31"
                                                 />
@@ -505,7 +566,7 @@ export const DoctorAvailabilityConfig: React.FC<DoctorAvailabilityConfigProps> =
                                                     type="time"
                                                     value={monthlyRelease.hour}
                                                     onChange={(e) => setMonthlyRelease({...monthlyRelease, hour: e.target.value})}
-                                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white text-gray-900"
                                                 />
                                             </div>
                                             
@@ -515,21 +576,21 @@ export const DoctorAvailabilityConfig: React.FC<DoctorAvailabilityConfigProps> =
                                                     type="number"
                                                     value={monthlyRelease.targetMonthOffset}
                                                     onChange={(e) => setMonthlyRelease({...monthlyRelease, targetMonthOffset: Number(e.target.value)})}
-                                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white text-gray-900"
                                                     min="1"
                                                     max="6"
                                                 />
                                             </div>
                                         </div>
                                         
-                                        <label className="flex items-center gap-2 text-sm mt-2">
+                                        <label className="flex items-center gap-2 text-sm mt-3 cursor-pointer p-2 hover:bg-blue-100/50 rounded transition-colors">
                                             <input
                                                 type="checkbox"
                                                 checked={monthlyRelease.fallbackToWeekday}
                                                 onChange={(e) => setMonthlyRelease({...monthlyRelease, fallbackToWeekday: e.target.checked})}
-                                                className="w-4 h-4 rounded border-gray-300 text-blue-600"
+                                                className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                                             />
-                                            <span className="text-gray-600">Se cair em fim de semana, usar dia útil anterior</span>
+                                            <span className="text-gray-700 font-medium">Se cair em fim de semana, mover para a Segunda-feira seguinte</span>
                                         </label>
                                     </div>
                                 )}
@@ -550,23 +611,67 @@ export const DoctorAvailabilityConfig: React.FC<DoctorAvailabilityConfigProps> =
                                 </h4>
                                 
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                    {/* Interval/Slot Configuration */}
                                     <div>
-                                        <label className="block text-sm font-medium text-gray-700 mb-1">
-                                            Janela de Agendamento (Dias)
+                                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                                            Duração da Consulta (Slot)
                                         </label>
                                         <div className="relative">
-                                            <input 
-                                                type="number" 
-                                                value={advanceBookingDays}
-                                                onChange={e => setAdvanceBookingDays(parseInt(e.target.value))}
-                                                className="w-full border border-gray-200 rounded-lg px-3 py-2 pr-12 outline-none focus:ring-2 focus:ring-blue-500"
-                                            />
-                                            <span className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">dias</span>
+                                            <select
+                                                value={intervalMinutes}
+                                                onChange={(e) => setIntervalMinutes(parseInt(e.target.value))}
+                                                className="w-full border border-gray-200 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-blue-500 bg-white appearance-none pr-10"
+                                            >
+                                                {intervalOptions.map(opt => (
+                                                    <option key={opt.value} value={opt.value}>{opt.label}</option>
+                                                ))}
+                                            </select>
+                                            <ChevronDown size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
                                         </div>
                                         <p className="text-xs text-gray-500 mt-1">
-                                            Permitir agendamentos até quantos dias no futuro.
+                                            Define o tempo padrão entre cada horário na agenda.
                                         </p>
                                     </div>
+
+                                    {/* Booking Window */}
+                                    {releaseType === AgendaReleaseType.ALWAYS_OPEN && (
+                                        <div>
+                                            <label className="block text-sm font-medium text-gray-700 mb-2">
+                                            Janela de Agendamento (Dias)
+                                            </label>
+                                            <div className="relative">
+                                                <input 
+                                                    type="number" 
+                                                    value={advanceBookingDays}
+                                                    onChange={e => setAdvanceBookingDays(parseInt(e.target.value))}
+                                                    className="w-full border border-gray-200 rounded-lg px-3 py-2 pr-12 outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                                                    min="1"
+                                                    max="365"
+                                                />
+                                                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">dias</span>
+                                            </div>
+                                            <p className="text-xs text-gray-500 mt-1">
+                                                Pacientes podem agendar até {advanceBookingDays} dias à frente.
+                                            </p>
+                                        </div>
+                                    )}
+                                    
+                                    {/* Info Box if using specific release rules */}
+                                    {releaseType !== AgendaReleaseType.ALWAYS_OPEN && (
+                                        <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                                            <div className="flex items-start gap-2">
+                                            <Info size={16} className="text-blue-600 mt-0.5 flex-shrink-0" />
+                                            <div className="text-sm text-blue-800">
+                                                <p className="font-medium mb-1">Janela calculada automaticamente</p>
+                                                <p className="text-xs">
+                                                {releaseType === AgendaReleaseType.WEEKLY_RELEASE 
+                                                    ? 'Pacientes poderão agendar até o fim da semana liberada.'
+                                                    : 'Pacientes poderão agendar durante todo o mês alvo.'}
+                                                </p>
+                                            </div>
+                                            </div>
+                                        </div>
+                                    )}
 
                                     <div>
                                         <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -577,7 +682,7 @@ export const DoctorAvailabilityConfig: React.FC<DoctorAvailabilityConfigProps> =
                                             value={maxAppointmentsPerDay || ''}
                                             onChange={e => setMaxAppointmentsPerDay(e.target.value ? parseInt(e.target.value) : undefined)}
                                             placeholder="Ilimitado"
-                                            className="w-full border border-gray-200 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-blue-500"
+                                            className="w-full border border-gray-200 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-blue-500 bg-white"
                                         />
                                         <p className="text-xs text-gray-500 mt-1">
                                             Máximo de atendimentos permitidos por dia.
@@ -613,7 +718,7 @@ export const DoctorAvailabilityConfig: React.FC<DoctorAvailabilityConfigProps> =
           Cancelar
         </button>
         <button 
-          onClick={handleSave}
+          onClick={initiateSave}
           disabled={saving}
           className="px-6 py-2.5 bg-blue-600 text-white font-bold rounded-xl hover:bg-blue-700 shadow-lg shadow-blue-500/30 flex items-center gap-2 transition-all disabled:opacity-70 disabled:cursor-not-allowed"
         >
@@ -630,6 +735,53 @@ export const DoctorAvailabilityConfig: React.FC<DoctorAvailabilityConfigProps> =
           )}
         </button>
       </div>
+
+      {/* Security Modal */}
+      {isSecurityModalOpen && (
+        <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">
+            <div className="bg-white rounded-2xl shadow-2xl p-6 w-full max-w-sm animate-in zoom-in-95">
+                <div className="text-center mb-6">
+                    <div className="w-14 h-14 bg-purple-50 rounded-full flex items-center justify-center mx-auto mb-3">
+                        <ShieldCheck size={28} className="text-purple-600" />
+                    </div>
+                    <h3 className="text-lg font-bold text-gray-900">Segurança Necessária</h3>
+                    <p className="text-sm text-gray-500 mt-1">
+                        Digite sua senha para confirmar as alterações na agenda.
+                    </p>
+                </div>
+
+                <form onSubmit={confirmSave} className="space-y-4">
+                    <div>
+                        <input
+                            type="password"
+                            value={securityPassword}
+                            onChange={(e) => setSecurityPassword(e.target.value)}
+                            className="w-full border border-gray-200 bg-white text-center text-gray-900 rounded-lg px-4 py-3 focus:ring-2 focus:ring-purple-500 outline-none transition-all placeholder-gray-400"
+                            placeholder="Sua senha atual"
+                            autoFocus
+                        />
+                    </div>
+                    
+                    <div className="flex gap-3">
+                        <button
+                            type="button"
+                            onClick={() => setIsSecurityModalOpen(false)}
+                            className="flex-1 py-2.5 bg-gray-100 text-gray-700 rounded-lg font-medium hover:bg-gray-200 transition-colors"
+                        >
+                            Cancelar
+                        </button>
+                        <button
+                            type="submit"
+                            disabled={!securityPassword || saving}
+                            className="flex-1 py-2.5 bg-purple-600 text-white rounded-lg font-bold hover:bg-purple-700 shadow-lg shadow-purple-200 transition-all disabled:opacity-70 disabled:cursor-not-allowed flex justify-center"
+                        >
+                            {saving ? <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" /> : 'Confirmar'}
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+      )}
     </div>
   );
 };

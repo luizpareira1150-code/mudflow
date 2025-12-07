@@ -2,7 +2,6 @@
 import React, { useState, useEffect } from 'react';
 import { ViewState, UserRole, AccountType } from '../types';
 import Sidebar from './Sidebar';
-import Dashboard from './Dashboard';
 import Patients from './Patients';
 import { Agenda } from './Agenda';
 import Admin from './Admin';
@@ -42,6 +41,8 @@ export const MainLayout: React.FC = () => {
         if (user.role === UserRole.OWNER) {
             return <OwnerDashboard currentUser={user} />;
         }
+        // For Doctors and Secretaries, "Dashboard" in navigation maps to CRM (Operational View)
+        // Doctors have a separate "Metrics" view for analytics
         return (
             <CRM 
                 user={user}
@@ -52,10 +53,11 @@ export const MainLayout: React.FC = () => {
             />
         );
       case ViewState.Metrics:
-        // Only allow DOCTOR_ADMIN to access
+        // Only allow DOCTOR_ADMIN to access Analytics
         if (user.role === UserRole.DOCTOR_ADMIN) {
             return <MetricsDashboard user={user} organization={organization} />;
         }
+        // Fallback for unauthorized access to metrics -> CRM
         return (
             <CRM 
                 user={user}
@@ -82,7 +84,16 @@ export const MainLayout: React.FC = () => {
       case ViewState.Logs:
         return <ActivityLogs user={user} />;
       default:
-        return <Dashboard />; // Fallback legacy dashboard if needed
+        // Safe Fallback: Always render CRM if state is unknown
+        return (
+            <CRM 
+                user={user}
+                doctors={doctors}
+                selectedDoctorId={selectedDoctorId}
+                onDoctorChange={setSelectedDoctorId}
+                isConsultorio={organization?.accountType === AccountType.CONSULTORIO}
+            />
+        );
     }
   };
 

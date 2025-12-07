@@ -2,8 +2,7 @@
 import React, { useEffect, useState } from 'react';
 import { authService } from '../services/mockSupabase';
 import { AppointmentStatus, DashboardMetrics } from '../types';
-import { Users, Calendar, ArrowUpRight, Activity, Sparkles } from 'lucide-react';
-import { analyzeRecoveryTrend } from '../services/geminiService';
+import { Users, Calendar, ArrowUpRight, Activity } from 'lucide-react';
 import { useRealtimeAppointments, useRealtimePatients } from '../hooks/useRealtimeData';
 import { RealtimeIndicator } from './RealtimeIndicator';
 
@@ -23,25 +22,6 @@ const Dashboard: React.FC = () => {
   const { data: patients, loading: loadingPatients } = useRealtimePatients(
     currentUser.clinicId
   );
-
-  const [aiInsight, setAiInsight] = useState<string>("Carregando análise...");
-
-  useEffect(() => {
-    const appts = todayAppointments || [];
-    // Only fetch if we have data or to clear state
-    if (appts.length > 0) {
-        const timer = setTimeout(() => {
-            analyzeRecoveryTrend(appts).then(insight => {
-                if (insight && insight !== "Analysis unavailable.") {
-                    setAiInsight(insight);
-                }
-            });
-        }, 1500); 
-        return () => clearTimeout(timer);
-    } else {
-        setAiInsight("Sem dados suficientes hoje para análise de IA.");
-    }
-  }, [todayAppointments]);
 
   const totalAppointments = todayAppointments?.length || 0;
   const attendedCount = todayAppointments?.filter(a => a.status === AppointmentStatus.ATENDIDO).length || 0;
@@ -85,7 +65,7 @@ const Dashboard: React.FC = () => {
   }
 
   return (
-    <div className="p-8 space-y-8 animate-in fade-in duration-500">
+    <div className="p-8 space-y-8 animate-in fade-in duration-500 pb-12">
       <header className="flex justify-between items-center">
         <div>
           <h2 className="text-3xl font-bold text-slate-800">Dashboard</h2>
@@ -94,10 +74,6 @@ const Dashboard: React.FC = () => {
             <span className="text-gray-300">•</span>
             <RealtimeIndicator />
           </div>
-        </div>
-        <div className="bg-white p-3 rounded-lg border border-slate-200 shadow-sm flex items-center gap-2">
-             <span className="text-xs font-bold text-primary-600 px-2 py-1 bg-primary-50 rounded-md">IA ATIVA</span>
-             <span className="text-sm text-slate-600">Gemini 2.5 Flash</span>
         </div>
       </header>
 
@@ -179,24 +155,6 @@ const Dashboard: React.FC = () => {
             </button>
           </div>
         </div>
-      </div>
-
-      {/* AI Insight Section */}
-      <div className="bg-gradient-to-r from-indigo-50 to-blue-50 p-6 rounded-2xl border border-indigo-100 shadow-sm transition-all hover:shadow-md">
-         <div className="flex items-start gap-4">
-             <div className="bg-white p-3 rounded-xl shadow-sm border border-indigo-50">
-                 <Sparkles className="text-indigo-600" size={24} />
-             </div>
-             <div className="flex-1">
-                 <h4 className="text-indigo-900 font-bold text-lg mb-2 flex items-center gap-2">
-                    INSIGHTS OPERACIONAIS (IA)
-                    <span className="text-[10px] font-normal bg-indigo-100 text-indigo-600 px-2 py-0.5 rounded-full">Análise em Tempo Real</span>
-                 </h4>
-                 <div className="text-indigo-800 text-sm leading-relaxed whitespace-pre-line">
-                     {aiInsight}
-                 </div>
-             </div>
-         </div>
       </div>
     </div>
   );

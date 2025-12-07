@@ -3,7 +3,7 @@ import React, { useState } from 'react';
 import { Patient, PatientStatus, Appointment } from '../types';
 import { generateSmartSummary } from '../services/geminiService';
 import { dataService } from '../services/mockSupabase'; // To fetch history
-import { Search, Filter, MoreHorizontal, Sparkles, X, Activity, UserPlus, Calendar, Clock, History } from 'lucide-react';
+import { Search, Filter, MoreHorizontal, Sparkles, X, Calendar, History } from 'lucide-react';
 import { authService } from '../services/mockSupabase';
 import { useRealtimePatients } from '../hooks/useRealtimeData';
 
@@ -57,10 +57,6 @@ const Patients: React.FC = () => {
           <h2 className="text-3xl font-bold text-slate-800">Base de Pacientes</h2>
           <p className="text-slate-500 mt-1">Gerencie cadastros e histórico de agendamentos.</p>
         </div>
-        <button className="bg-primary-600 text-white px-6 py-2.5 rounded-xl font-medium shadow-lg shadow-primary-500/20 hover:bg-primary-700 transition-colors flex items-center gap-2">
-          <UserPlus size={18} />
-          Novo Paciente
-        </button>
       </header>
 
       {/* Filter Bar */}

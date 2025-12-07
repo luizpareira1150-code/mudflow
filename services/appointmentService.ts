@@ -1,3 +1,8 @@
+
+
+
+
+
 import { Appointment, AppointmentStatus, AvailableSlot, AuditAction, AuditSource, UserRole, DayOfWeek } from '../types';
 import { STORAGE_KEYS, getStorage, setStorage, delay, initialAppointments } from './storage';
 import { systemLogService } from './auditService';
@@ -79,21 +84,59 @@ const triggerRichWebhook = async (
 };
 
 export const appointmentService = {
+  // NEW METHOD: Efficiently fetch range for Analytics/AI
+  getAppointmentsInRange: async (clinicId: string, startDate: string, endDate: string): Promise<Appointment[]> => {
+      await delay(200); // Slight delay simulation
+      const appts = getStorage<Appointment[]>(STORAGE_KEYS.APPOINTMENTS, initialAppointments);
+      
+      // Filter strictly by range and clinic
+      return appts.filter(a => 
+          a.clinicId === clinicId && 
+          a.date >= startDate && 
+          a.date <= endDate
+      );
+  },
+
   getAvailableSlots: async (clinicId: string, doctorId: string, date: string): Promise<AvailableSlot[]> => {
       await delay(300);
       
-      // 1. Availability Check (Schedule & Absences)
+      // 1. Availability Check (Schedule & Absences) - Disponibilidade Física
       const validation = await doctorAvailabilityService.validateAvailability(doctorId, clinicId, date);
 
       if (!validation.isAvailable) {
           return [];
       }
 
-      // 2. Agenda Release Rule Check (New)
+      // 2. Agenda Release Rule Check (New) - Regras de Abertura (Semanal/Mensal)
       const releaseCheck = await agendaReleaseService.isDateReleased(doctorId, clinicId, date);
       if (!releaseCheck.released) {
+          // Opcional: Você pode logar isso ou retornar um motivo especial se a UI suportar "Bloqueado por Data"
           // console.warn(`[RELEASE] ${releaseCheck.reason}`);
           return []; // Agenda ainda não foi liberada
+      }
+
+      // 3. Valid Booking Window Check (Janela Global)
+      // Isso garante que não mostre datas "velhas" ou muito futuras fora da lógica
+      const bookingWindow = await agendaReleaseService.getValidBookingWindow(doctorId, clinicId, new Date());
+
+      if (bookingWindow) {
+        const targetDate = new Date(date + 'T00:00:00');
+        // Adiciona margem de segurança no endDate para cobrir o dia inteiro
+        const safeEndDate = new Date(bookingWindow.endDate);
+        safeEndDate.setHours(23, 59, 59, 999);
+
+        // Permitimos agendar datas futuras dentro da janela. 
+        // Datas passadas (antes de hoje) já são filtradas naturalmente pela UI/Lógica de negócio, 
+        // mas o bookingWindow.startDate ajuda a garantir.
+        
+        // Correção para Dr. João (Cenário B):
+        // Se a janela diz "Até 30/Nov", e tentam pedir 05/Dez, bloqueia.
+        // Se a janela diz "Até 30/Nov", e tentam pedir 27/Nov, permite.
+        
+        if (targetDate > safeEndDate) {
+          // Fora da janela futura permitida
+          return [];
+        }
       }
 
       const [legacyConfig, availability] = await Promise.all([
@@ -101,8 +144,14 @@ export const appointmentService = {
           doctorAvailabilityService.getDoctorAvailability(doctorId, clinicId)
       ]);
 
+      // Fetch patients to populate data
+      const patients = await patientService.getAllPatients(clinicId);
+
       const allAppts = getStorage<Appointment[]>(STORAGE_KEYS.APPOINTMENTS, initialAppointments);
-      const doctorAppts = allAppts.filter(a => a.clinicId === clinicId && a.doctorId === doctorId && a.date === date && a.status !== AppointmentStatus.NAO_VEIO);
+      
+      const doctorAppts = allAppts
+        .filter(a => a.clinicId === clinicId && a.doctorId === doctorId && a.date === date && a.status !== AppointmentStatus.NAO_VEIO)
+        .map(a => ({ ...a, patient: patients.find(p => p.id === a.patientId) }));
       
       const slots: AvailableSlot[] = [];
       const dayOfWeek = getDayOfWeekBR(date) as DayOfWeek; 

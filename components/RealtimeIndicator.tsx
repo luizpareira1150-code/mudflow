@@ -2,7 +2,11 @@ import React, { useState, useEffect } from 'react';
 import { Wifi, WifiOff } from 'lucide-react';
 import { socketServer, SocketEvent } from '../lib/socketServer';
 
-export const RealtimeIndicator: React.FC = () => {
+interface RealtimeIndicatorProps {
+  className?: string;
+}
+
+export const RealtimeIndicator: React.FC<RealtimeIndicatorProps> = ({ className = '' }) => {
   const [isConnected, setIsConnected] = useState(true);
   const [lastUpdate, setLastUpdate] = useState<Date>(new Date());
 
@@ -42,7 +46,7 @@ export const RealtimeIndicator: React.FC = () => {
       ${isConnected 
         ? 'bg-green-50 text-green-700 border border-green-200' 
         : 'bg-gray-50 text-gray-500 border border-gray-200'
-      }`}
+      } ${className}`}
       title={isConnected ? `Conectado. Última atualização: ${lastUpdate.toLocaleTimeString()}` : 'Offline'}
     >
       {isConnected ? (

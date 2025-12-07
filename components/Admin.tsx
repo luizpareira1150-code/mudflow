@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { User, UserRole, ClinicSettings, Doctor, Organization, AccountType } from '../types';
-import { dataService } from '../services/mockSupabase';
+import { dataService, authService } from '../services/mockSupabase';
 import Automations from './Automations';
-import { Users, Webhook, Workflow, Stethoscope, Mail, Phone, KeyRound, Building2, X, RefreshCw, Trash2, AlertTriangle } from 'lucide-react';
+import { Users, Webhook, Workflow, Stethoscope, Mail, Phone, KeyRound, Building2, X, RefreshCw, Trash2, AlertTriangle, Lock, ShieldCheck, UserCog } from 'lucide-react';
 import { useToast } from './ToastProvider';
 import { DoctorAvailabilityConfig } from './DoctorAvailabilityConfig';
 
@@ -10,14 +10,59 @@ import { DoctorAvailabilityConfig } from './DoctorAvailabilityConfig';
 import { AdminTeam } from './admin/AdminTeam';
 import { AdminDoctors } from './admin/AdminDoctors';
 import { AdminIntegrations } from './admin/AdminIntegrations';
+import { AdminProfile } from './admin/AdminProfile';
 
 interface AdminProps {
   user: User;
 }
 
+// Helper Wrapper for Locked Content extracted to avoid re-definition on render
+interface LockedContentProps {
+  children: React.ReactNode;
+  isLocked: boolean;
+  onUnlockRequest: () => void;
+}
+
+const LockedContent: React.FC<LockedContentProps> = ({ children, isLocked, onUnlockRequest }) => {
+    // If not locked, show content
+    if (!isLocked) {
+        return <>{children}</>;
+    }
+
+    return (
+        <div className="relative">
+            {/* Blurred Content - Increased blur for better security perception */}
+            <div className="filter blur-md pointer-events-none select-none opacity-40 h-[500px] overflow-hidden bg-gray-50">
+                {children}
+            </div>
+            
+            {/* Lock Overlay */}
+            <div className="absolute inset-0 flex items-center justify-center z-10">
+                <div className="bg-white p-8 rounded-2xl shadow-xl border border-gray-200 text-center max-w-sm mx-4 transform scale-100 hover:scale-105 transition-transform duration-300">
+                    <div className="w-16 h-16 bg-purple-100 rounded-full flex items-center justify-center mx-auto mb-4 animate-pulse">
+                        <Lock size={32} className="text-purple-600" />
+                    </div>
+                    <h3 className="text-xl font-bold text-gray-900 mb-2">Acesso Restrito</h3>
+                    <p className="text-sm text-gray-500 mb-6 leading-relaxed">
+                        Esta área contém configurações sensíveis de integração. 
+                        Solicite a senha ao <strong>Super-Admin</strong> para continuar.
+                    </p>
+                    <button 
+                        onClick={onUnlockRequest}
+                        className="w-full py-3 bg-purple-600 text-white rounded-xl font-bold hover:bg-purple-700 shadow-lg shadow-purple-200 transition-all flex items-center justify-center gap-2"
+                    >
+                        <ShieldCheck size={18} />
+                        Liberar Acesso
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+};
+
 const Admin: React.FC<AdminProps> = ({ user: currentUser }) => {
   const { showToast } = useToast();
-  const [activeTab, setActiveTab] = useState<'team' | 'doctors' | 'integrations' | 'automations'>('team');
+  const [activeTab, setActiveTab] = useState<'team' | 'profile' | 'doctors' | 'integrations' | 'automations'>('team');
 
   // --- GLOBAL DATA ---
   const [users, setUsers] = useState<User[]>([]);
@@ -34,6 +79,11 @@ const Admin: React.FC<AdminProps> = ({ user: currentUser }) => {
   const [resetModal, setResetModal] = useState<{ isOpen: boolean; user: User | null }>({ isOpen: false, user: null });
   const [newPassword, setNewPassword] = useState('');
   const [actionLoading, setActionLoading] = useState(false);
+
+  // --- FEATURE UNLOCK STATE ---
+  const [isFeaturesUnlocked, setIsFeaturesUnlocked] = useState(false);
+  const [isUnlockModalOpen, setIsUnlockModalOpen] = useState(false);
+  const [unlockPassword, setUnlockPassword] = useState('');
 
   // Check Permissions for Tabs
   const canViewDoctors = currentUser.role === UserRole.DOCTOR_ADMIN && currentOrganization?.accountType === AccountType.CLINICA;
@@ -115,7 +165,28 @@ const Admin: React.FC<AdminProps> = ({ user: currentUser }) => {
     }
   };
 
-  // Helper to get role color (Duplicate from AdminTeam logic for modal use)
+  const handleUnlockFeatures = async (e: React.FormEvent) => {
+      e.preventDefault();
+      setActionLoading(true);
+      try {
+          // This verifies against the CURRENT stored password of the OWNER role user.
+          const isValid = await authService.verifyMasterPassword(unlockPassword);
+          if (isValid) {
+              setIsFeaturesUnlocked(true);
+              setIsUnlockModalOpen(false);
+              showToast('success', 'Acesso desbloqueado pelo Super-Admin.');
+          } else {
+              showToast('error', 'Senha de Super-Admin incorreta.');
+          }
+      } catch (error) {
+          showToast('error', 'Erro na verificação.');
+      } finally {
+          setActionLoading(false);
+          setUnlockPassword('');
+      }
+  };
+
+  // Helper to get role color
   const getRoleColor = (role: string) => {
       switch(role) {
           case UserRole.OWNER: return 'bg-purple-100 text-purple-700 border-purple-200';
@@ -125,6 +196,9 @@ const Admin: React.FC<AdminProps> = ({ user: currentUser }) => {
       }
   };
   const getUserOrg = (user: User) => organizations.find(o => o.id === user.clinicId);
+
+  // Lock logic: Only unlocked for OWNER or if password verified
+  const isLocked = !(isFeaturesUnlocked || currentUser.role === UserRole.OWNER);
 
   return (
     <div className={`mx-auto pb-10 relative p-8 animate-in fade-in duration-500 ${activeTab === 'automations' ? 'max-w-6xl' : 'max-w-4xl'}`}>
@@ -148,8 +222,19 @@ const Admin: React.FC<AdminProps> = ({ user: currentUser }) => {
             ${activeTab === 'team' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
         >
           <Users size={18} />
-          {currentUser.role === UserRole.OWNER ? 'Contas Ativas (Cards)' : 'Minha Equipe'}
+          {currentUser.role === UserRole.OWNER ? 'Contas Ativas' : 'Minha Equipe'}
         </button>
+
+        {currentUser.role === UserRole.OWNER && (
+            <button
+            onClick={() => setActiveTab('profile')}
+            className={`flex items-center gap-2 px-6 py-2.5 rounded-lg text-sm font-medium transition-all whitespace-nowrap
+                ${activeTab === 'profile' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+            >
+            <UserCog size={18} />
+            Minha Conta
+            </button>
+        )}
         
         {canViewDoctors && (
             <button
@@ -196,6 +281,10 @@ const Admin: React.FC<AdminProps> = ({ user: currentUser }) => {
           />
       )}
 
+      {activeTab === 'profile' && (
+          <AdminProfile currentUser={currentUser} />
+      )}
+
       {activeTab === 'doctors' && (
           <AdminDoctors 
             currentUser={currentUser}
@@ -208,20 +297,24 @@ const Admin: React.FC<AdminProps> = ({ user: currentUser }) => {
       )}
 
       {activeTab === 'integrations' && (
-          <AdminIntegrations 
-            currentUser={currentUser}
-            settings={settings}
-            onSettingsSaved={loadSettings}
-          />
+          <LockedContent isLocked={isLocked} onUnlockRequest={() => setIsUnlockModalOpen(true)}>
+              <AdminIntegrations 
+                currentUser={currentUser}
+                settings={settings}
+                onSettingsSaved={loadSettings}
+              />
+          </LockedContent>
       )}
 
       {activeTab === 'automations' && (
-        <div className="animate-in fade-in slide-in-from-right-4 duration-300">
-            <Automations />
-        </div>
+        <LockedContent isLocked={isLocked} onUnlockRequest={() => setIsUnlockModalOpen(true)}>
+            <div className="animate-in fade-in slide-in-from-right-4 duration-300">
+                <Automations />
+            </div>
+        </LockedContent>
       )}
 
-      {/* --- USER DETAIL POP-UP MODAL (Kept in Parent to cover all tabs if needed) --- */}
+      {/* --- USER DETAIL POP-UP MODAL --- */}
       {selectedUser && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[60] p-4">
             <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md max-h-[90vh] overflow-y-auto animate-in zoom-in-95 duration-200 flex flex-col">
@@ -396,6 +489,51 @@ const Admin: React.FC<AdminProps> = ({ user: currentUser }) => {
               {actionLoading ? 'Salvando...' : 'Salvar Senha'}
             </button>
           </div>
+        </div>
+      )}
+
+      {/* --- FEATURE UNLOCK MODAL --- */}
+      {isUnlockModalOpen && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[80] p-4">
+            <div className="bg-white rounded-2xl shadow-2xl max-w-sm w-full p-6 animate-in zoom-in-95">
+                <div className="text-center mb-6">
+                    <div className="w-16 h-16 bg-purple-50 rounded-full flex items-center justify-center mx-auto mb-3 shadow-inner">
+                        <Lock size={32} className="text-purple-600" />
+                    </div>
+                    <h3 className="text-xl font-bold text-gray-900">Autorização Necessária</h3>
+                    <p className="text-sm text-gray-500 mt-2">
+                        Insira a <strong>Senha do Dono / Super-Admin</strong> para desbloquear os recursos avançados.
+                    </p>
+                </div>
+
+                <form onSubmit={handleUnlockFeatures} className="space-y-4">
+                    <input
+                        type="password"
+                        value={unlockPassword}
+                        onChange={(e) => setUnlockPassword(e.target.value)}
+                        className="w-full border border-gray-200 bg-white text-center text-gray-900 rounded-xl px-4 py-3 focus:ring-2 focus:ring-purple-500 outline-none transition-all placeholder-gray-400"
+                        placeholder="Senha do Dono"
+                        autoFocus
+                    />
+                    
+                    <div className="flex gap-3">
+                        <button
+                            type="button"
+                            onClick={() => { setIsUnlockModalOpen(false); setUnlockPassword(''); }}
+                            className="flex-1 py-3 bg-white border border-gray-200 text-gray-600 rounded-xl font-medium hover:bg-gray-50 transition-colors"
+                        >
+                            Cancelar
+                        </button>
+                        <button
+                            type="submit"
+                            disabled={!unlockPassword || actionLoading}
+                            className="flex-1 py-3 bg-purple-600 text-white rounded-xl font-bold hover:bg-purple-700 shadow-md transition-all flex justify-center items-center gap-2 disabled:opacity-70"
+                        >
+                            {actionLoading ? <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" /> : 'Confirmar'}
+                        </button>
+                    </div>
+                </form>
+            </div>
         </div>
       )}
 

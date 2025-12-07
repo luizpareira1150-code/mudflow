@@ -1,4 +1,5 @@
-import { User, AuditAction, AuditSource } from '../types';
+
+import { User, AuditAction, AuditSource, UserRole } from '../types';
 import { STORAGE_KEYS, getStorage, setStorage, initialUsers, StoredUser, delay } from './storage';
 import { passwordService } from './passwordService';
 import { systemLogService } from './auditService';
@@ -74,5 +75,28 @@ export const authService = {
       const storedUser = users.find(u => u.id === currentUser.id);
       if (!storedUser) return false;
       return passwordService.verifyPassword(pass, storedUser.passwordHash);
+  },
+
+  /**
+   * Verifica a senha Mestra (Super Admin / Owner).
+   * Busca sempre a versão mais recente do usuário no storage para garantir
+   * que se a senha do Dono mudar, a validação acompanha imediatamente.
+   */
+  verifyMasterPassword: async (pass: string): Promise<boolean> => {
+      await delay(300);
+      
+      // Busca usuários atualizados do storage
+      const users = getStorage<StoredUser[]>(STORAGE_KEYS.USERS, initialUsers);
+      
+      // Encontra o usuário que é DONO (Super Admin)
+      const owner = users.find(u => u.role === UserRole.OWNER);
+      
+      if (!owner) {
+          console.warn("[AUTH] Erro de Segurança: Conta de Dono não encontrada.");
+          return false;
+      }
+      
+      // Verifica a senha fornecida contra o hash atual do Dono
+      return passwordService.verifyPassword(pass, owner.passwordHash);
   }
 };

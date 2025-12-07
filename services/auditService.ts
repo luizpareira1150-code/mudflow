@@ -34,16 +34,22 @@ export const systemLogService = {
         if (filters.source) {
             filtered = filtered.filter(l => l.source === filters.source);
         }
+        
+        // CRITICAL FIX: Date Parsing for Local Timezone Compatibility
+        // Ensure we construct the date boundaries based on Local Time components
+        // to match the user's perception of "Today" or specific dates.
         if (filters.startDate) {
-            const start = new Date(filters.startDate);
-            start.setHours(0,0,0,0);
+            const [y, m, d] = filters.startDate.split('-').map(Number);
+            const start = new Date(y, m - 1, d, 0, 0, 0, 0); // Local Midnight
             filtered = filtered.filter(l => new Date(l.timestamp) >= start);
         }
+        
         if (filters.endDate) {
-            const end = new Date(filters.endDate);
-            end.setHours(23,59,59,999);
+            const [y, m, d] = filters.endDate.split('-').map(Number);
+            const end = new Date(y, m - 1, d, 23, 59, 59, 999); // Local End of Day
             filtered = filtered.filter(l => new Date(l.timestamp) <= end);
         }
+
         if (filters.searchTerm) {
             const term = filters.searchTerm.toLowerCase();
             filtered = filtered.filter(log => 

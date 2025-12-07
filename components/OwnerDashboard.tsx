@@ -188,7 +188,8 @@ export const OwnerDashboard: React.FC<{ currentUser: User }> = ({ currentUser })
     }
     
     const noAutomation = clientsMetrics.filter(c => !c.automationsActive).length;
-    if (noAutomation > 2) {
+    // Lowered threshold from 2 to 0 to show insights even with few clients
+    if (noAutomation > 0) {
       insights.push({
         icon: '⚠️',
         title: `${noAutomation} clientes não usaram automações este mês`,
@@ -207,7 +208,8 @@ export const OwnerDashboard: React.FC<{ currentUser: User }> = ({ currentUser })
       });
     }
     
-    if (trafficOpportunities.length > 3) {
+    // Lowered threshold from 3 to 0 to show opportunities
+    if (trafficOpportunities.length > 0) {
       const potentialRev = trafficOpportunities.reduce((sum, c) => sum + (c as any).potentialNewAppointments, 0) * 200;
       insights.push({
         icon: '💰',
@@ -215,6 +217,16 @@ export const OwnerDashboard: React.FC<{ currentUser: User }> = ({ currentUser })
         description: `Receita potencial estimada em R$ ${potentialRev.toLocaleString('pt-BR')} com tráfego pago.`,
         action: 'Ver Oportunidades'
       });
+    }
+
+    // Fallback Insight if everything is "perfect" (or empty)
+    if (insights.length === 0) {
+        insights.push({
+            icon: '✅',
+            title: 'Operação Estável',
+            description: 'Nenhuma anomalia crítica detectada. Suas métricas de crescimento e retenção estão dentro do esperado para o período.',
+            action: null
+        });
     }
     
     return insights;

@@ -47,10 +47,10 @@ export enum DayOfWeek {
 
 // --- NEW AGENDA RELEASE TYPES ---
 export enum AgendaReleaseType {
-  ALWAYS_OPEN = 'ALWAYS_OPEN',
-  WEEKLY_RELEASE = 'WEEKLY_RELEASE',
-  MONTHLY_RELEASE = 'MONTHLY_RELEASE',
-  CUSTOM_DATE = 'CUSTOM_DATE'
+  ALWAYS_OPEN = 'ALWAYS_OPEN',           // Agenda sempre aberta (padrão)
+  WEEKLY_RELEASE = 'WEEKLY_RELEASE',     // Abre semanalmente em dia/hora específico
+  MONTHLY_RELEASE = 'MONTHLY_RELEASE',   // Abre mensalmente em dia específico
+  CUSTOM_DATE = 'CUSTOM_DATE'            // Datas customizadas manualmente
 }
 
 export interface AgendaReleaseSchedule {
@@ -59,23 +59,26 @@ export interface AgendaReleaseSchedule {
   organizationId: string;
   releaseType: AgendaReleaseType;
   
+  // Para WEEKLY_RELEASE (Ex: Dr. André)
   weeklyConfig?: {
-    dayOfWeek: DayOfWeek;
-    hour: string;
-    advanceDays: number;
+    dayOfWeek: DayOfWeek;        // Ex: Segunda (1)
+    hour: string;                 // Ex: "07:00"
+    advanceDays: number;          // Ex: 2 (abre segunda para quarta)
   };
   
+  // Para MONTHLY_RELEASE (Ex: Dr. João)
   monthlyConfig?: {
-    releaseDay: number;
-    fallbackToWeekday: boolean;
-    hour: string;
-    targetMonthOffset: number;
+    releaseDay: number;           // Ex: 22 (dia 22 do mês)
+    fallbackToWeekday: boolean;   // Se 22 cair no fim de semana, usar dia útil anterior?
+    hour: string;                 // Ex: "00:00"
+    targetMonthOffset: number;    // Ex: 1 (abre para mês seguinte)
   };
   
+  // Para CUSTOM_DATE
   customDates?: {
-    releaseDate: string;
-    targetStartDate: string;
-    targetEndDate: string;
+    releaseDate: string;          // Ex: "2024-12-22"
+    targetStartDate: string;      // Ex: "2025-01-01"
+    targetEndDate: string;        // Ex: "2025-01-31"
   }[];
   
   enabled: boolean;

@@ -9,6 +9,7 @@ import {
 } from 'lucide-react';
 import { LogDetailsModal } from './LogDetailsModal';
 import { formatDateTimeBR } from '../utils/dateUtils';
+import { DatePicker } from './DatePicker';
 
 interface ActivityLogsProps {
   user: User;
@@ -20,12 +21,16 @@ export const ActivityLogs: React.FC<ActivityLogsProps> = ({ user }) => {
   const [stats, setStats] = useState({ totalLogs: 0, todayCount: 0, errorCount: 0, mostActiveUser: null as any });
   const [totalRecords, setTotalRecords] = useState(0);
   
+  // Initialize with last 7 days by default
+  const today = new Date().toISOString().split('T')[0];
+  const lastWeek = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+
   const [filters, setFilters] = useState({
     searchTerm: '',
     action: '' as string,
     source: '' as string,
-    startDate: '',
-    endDate: ''
+    startDate: lastWeek,
+    endDate: today
   });
 
   // Server-side pagination emulation
@@ -126,12 +131,12 @@ export const ActivityLogs: React.FC<ActivityLogsProps> = ({ user }) => {
         searchTerm: '',
         action: '',
         source: '',
-        startDate: '',
-        endDate: ''
+        startDate: lastWeek,
+        endDate: today
       });
   };
 
-  const hasActiveFilters = Object.values(filters).some(val => val !== '');
+  const hasActiveFilters = Object.values(filters).some(val => val !== '' && val !== lastWeek && val !== today);
 
   return (
     <div className="p-8 h-screen flex flex-col animate-in fade-in duration-500 bg-slate-50/50">
@@ -149,7 +154,7 @@ export const ActivityLogs: React.FC<ActivityLogsProps> = ({ user }) => {
       </header>
 
       {/* Stats Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
           <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between">
               <div>
                   <p className="text-xs font-bold text-slate-500 uppercase">Total Eventos</p>
@@ -171,16 +176,6 @@ export const ActivityLogs: React.FC<ActivityLogsProps> = ({ user }) => {
               </div>
               <div className="p-3 bg-red-50 rounded-lg text-red-600"><AlertTriangle size={20} /></div>
           </div>
-          <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between">
-              <div>
-                  <p className="text-xs font-bold text-slate-500 uppercase">Usuário +Ativo</p>
-                  <p className="text-lg font-bold text-slate-800 truncate max-w-[120px]" title={stats.mostActiveUser?.name}>
-                      {stats.mostActiveUser?.name || '-'}
-                  </p>
-                  <p className="text-xs text-slate-400">{stats.mostActiveUser?.count || 0} ações</p>
-              </div>
-              <div className="p-3 bg-purple-50 rounded-lg text-purple-600"><UserIcon size={20} /></div>
-          </div>
       </div>
 
       <div className="bg-white p-6 rounded-xl border border-slate-200 mb-6 shadow-sm">
@@ -198,21 +193,17 @@ export const ActivityLogs: React.FC<ActivityLogsProps> = ({ user }) => {
           
           <div>
             <label className="block text-xs font-bold text-gray-500 mb-1">Data Inicial</label>
-            <input 
-              type="date"
-              value={filters.startDate}
-              onChange={(e) => setFilters({...filters, startDate: e.target.value})}
-              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500"
+            <DatePicker 
+                value={filters.startDate}
+                onChange={(date) => setFilters({...filters, startDate: date})}
             />
           </div>
 
           <div>
             <label className="block text-xs font-bold text-gray-500 mb-1">Data Final</label>
-            <input 
-              type="date"
-              value={filters.endDate}
-              onChange={(e) => setFilters({...filters, endDate: e.target.value})}
-              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500"
+            <DatePicker 
+                value={filters.endDate}
+                onChange={(date) => setFilters({...filters, endDate: date})}
             />
           </div>
           
@@ -222,7 +213,7 @@ export const ActivityLogs: React.FC<ActivityLogsProps> = ({ user }) => {
               <select 
                 value={filters.action}
                 onChange={(e) => setFilters({...filters, action: e.target.value as AuditAction})}
-                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500 appearance-none"
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500 appearance-none bg-white"
               >
                 <option value="">Todas</option>
                 <option value="CONTACT_CREATED">Contato Criado</option>
@@ -246,7 +237,7 @@ export const ActivityLogs: React.FC<ActivityLogsProps> = ({ user }) => {
               <select 
                 value={filters.source}
                 onChange={(e) => setFilters({...filters, source: e.target.value as AuditSource})}
-                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500 appearance-none"
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500 appearance-none bg-white"
               >
                 <option value="">Todas</option>
                 <option value="WEB_APP">Manual (Interface)</option>
@@ -267,7 +258,7 @@ export const ActivityLogs: React.FC<ActivityLogsProps> = ({ user }) => {
               value={filters.searchTerm}
               onChange={(e) => setFilters({...filters, searchTerm: e.target.value})}
               placeholder="Buscar por descrição, usuário ou ID..."
-              className="w-full border border-gray-200 rounded-lg pl-10 pr-4 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full border border-gray-200 rounded-lg pl-10 pr-4 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500 bg-white"
             />
           </div>
         </div>
@@ -279,7 +270,7 @@ export const ActivityLogs: React.FC<ActivityLogsProps> = ({ user }) => {
         </p>
         <button 
           onClick={exportLogs}
-          className="flex items-center gap-2 px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-black transition-colors text-sm font-medium"
+          className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium shadow-sm"
         >
           <Download size={16} />
           Exportar CSV
