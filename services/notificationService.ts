@@ -1,3 +1,4 @@
+
 import { Notification, NotificationType, NotificationPriority, UserRole } from '../types';
 
 const STORAGE_KEY = 'medflow_notifications';
@@ -73,7 +74,8 @@ class NotificationService {
     const notifications = this.getStoredNotifications();
     
     const newNotification: Notification = {
-      id: Math.random().toString(36).substr(2, 9),
+      // GOVERNANCE: Use crypto.randomUUID()
+      id: crypto.randomUUID(),
       title: params.title,
       message: params.message,
       type: params.type,

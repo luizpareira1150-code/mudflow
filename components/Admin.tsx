@@ -1,6 +1,7 @@
+
 import React, { useState, useEffect } from 'react';
 import { User, UserRole, ClinicSettings, Doctor, Organization, AccountType } from '../types';
-import { dataService, authService } from '../services/mockSupabase';
+import { doctorService, settingsService, authService } from '../services/mockSupabase';
 import Automations from './Automations';
 import { Users, Webhook, Workflow, Stethoscope, Mail, Phone, KeyRound, Building2, X, RefreshCw, Trash2, AlertTriangle, Lock, ShieldCheck, UserCog } from 'lucide-react';
 import { useToast } from './ToastProvider';
@@ -24,37 +25,32 @@ interface LockedContentProps {
 }
 
 const LockedContent: React.FC<LockedContentProps> = ({ children, isLocked, onUnlockRequest }) => {
-    // If not locked, show content
+    // SECURITY: Do not render children (which may contain API keys) if locked.
     if (!isLocked) {
         return <>{children}</>;
     }
 
     return (
-        <div className="relative">
-            {/* Blurred Content - Increased blur for better security perception */}
-            <div className="filter blur-md pointer-events-none select-none opacity-40 h-[500px] overflow-hidden bg-gray-50">
-                {children}
-            </div>
+        <div className="relative h-[500px] bg-slate-50 rounded-2xl border border-slate-200 flex flex-col items-center justify-center overflow-hidden">
+            <div className="absolute inset-0 opacity-5" style={{ backgroundImage: 'radial-gradient(#64748b 1px, transparent 1px)', backgroundSize: '20px 20px' }}></div>
             
-            {/* Lock Overlay */}
-            <div className="absolute inset-0 flex items-center justify-center z-10">
-                <div className="bg-white p-8 rounded-2xl shadow-xl border border-gray-200 text-center max-w-sm mx-4 transform scale-100 hover:scale-105 transition-transform duration-300">
-                    <div className="w-16 h-16 bg-purple-100 rounded-full flex items-center justify-center mx-auto mb-4 animate-pulse">
-                        <Lock size={32} className="text-purple-600" />
-                    </div>
-                    <h3 className="text-xl font-bold text-gray-900 mb-2">Acesso Restrito</h3>
-                    <p className="text-sm text-gray-500 mb-6 leading-relaxed">
-                        Esta área contém configurações sensíveis de integração. 
-                        Solicite a senha ao <strong>Super-Admin</strong> para continuar.
-                    </p>
-                    <button 
-                        onClick={onUnlockRequest}
-                        className="w-full py-3 bg-purple-600 text-white rounded-xl font-bold hover:bg-purple-700 shadow-lg shadow-purple-200 transition-all flex items-center justify-center gap-2"
-                    >
-                        <ShieldCheck size={18} />
-                        Liberar Acesso
-                    </button>
+            <div className="z-10 bg-white p-8 rounded-2xl shadow-xl border border-slate-200 text-center max-w-sm mx-4 transform transition-all">
+                <div className="w-16 h-16 bg-purple-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                    <Lock size={32} className="text-purple-600" />
                 </div>
+                <h3 className="text-xl font-bold text-gray-900 mb-2">Acesso Protegido</h3>
+                <p className="text-sm text-gray-500 mb-6 leading-relaxed">
+                    Esta área contém credenciais de integração sensíveis (API Keys).
+                    <br/>
+                    <strong>Conteúdo oculto por segurança.</strong>
+                </p>
+                <button 
+                    onClick={onUnlockRequest}
+                    className="w-full py-3 bg-purple-600 text-white rounded-xl font-bold hover:bg-purple-700 shadow-lg shadow-purple-200 transition-all flex items-center justify-center gap-2"
+                >
+                    <ShieldCheck size={18} />
+                    Solicitar Acesso
+                </button>
             </div>
         </div>
     );
@@ -69,9 +65,11 @@ const Admin: React.FC<AdminProps> = ({ user: currentUser }) => {
   const [doctors, setDoctors] = useState<Doctor[]>([]);
   const [organizations, setOrganizations] = useState<Organization[]>([]);
   const [currentOrganization, setCurrentOrganization] = useState<Organization | null>(null);
+  
+  // Sensitive Data (Deferred Loading)
   const [settings, setSettings] = useState<ClinicSettings>({ clinicId: currentUser.clinicId });
 
-  // --- MODAL STATES (Global actions that affect lists) ---
+  // --- MODAL STATES ---
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
   const [selectedDoctorForAvailability, setSelectedDoctorForAvailability] = useState<Doctor | null>(null);
   
@@ -85,12 +83,13 @@ const Admin: React.FC<AdminProps> = ({ user: currentUser }) => {
   const [isUnlockModalOpen, setIsUnlockModalOpen] = useState(false);
   const [unlockPassword, setUnlockPassword] = useState('');
 
-  // Check Permissions for Tabs
+  // Lock logic: Only unlocked for OWNER or if password verified
+  const isLocked = !(isFeaturesUnlocked || currentUser.role === UserRole.OWNER);
+
   const canViewDoctors = currentUser.role === UserRole.DOCTOR_ADMIN && currentOrganization?.accountType === AccountType.CLINICA;
 
   const loadData = async () => {
-    // 1. Load Users
-    const fetchedUsers = await dataService.getUsers(
+    const fetchedUsers = await doctorService.getUsers(
       currentUser.role === UserRole.OWNER ? undefined : currentUser.clinicId
     );
 
@@ -99,35 +98,43 @@ const Admin: React.FC<AdminProps> = ({ user: currentUser }) => {
         u.role === UserRole.DOCTOR_ADMIN && u.id !== currentUser.id
       );
       setUsers(adminsOnly);
-      const orgs = await dataService.getOrganizations();
+      const orgs = await doctorService.getOrganizations();
       setOrganizations(orgs);
     } else {
       setUsers(fetchedUsers);
     }
 
-    // 2. Load Organization & Doctors
     if (currentUser.role === UserRole.DOCTOR_ADMIN) {
-        const org = await dataService.getOrganization(currentUser.clinicId);
+        const org = await doctorService.getOrganization(currentUser.clinicId);
         setCurrentOrganization(org);
         
         if (org?.accountType === AccountType.CLINICA) {
-            const docs = await dataService.getDoctors(currentUser.clinicId);
+            const docs = await doctorService.getDoctors(currentUser.clinicId);
             setDoctors(docs);
         }
     }
   };
 
   const loadSettings = async () => {
+    // SECURITY: Only load settings if the view is UNLOCKED
+    if (currentUser.role !== UserRole.OWNER && !isFeaturesUnlocked) return;
+
     if (currentUser.role !== UserRole.OWNER) {
-        const data = await dataService.getClinicSettings(currentUser.clinicId);
+        const data = await settingsService.getClinicSettings(currentUser.clinicId);
         setSettings(data);
     }
   };
 
   useEffect(() => {
     loadData();
-    if (activeTab === 'integrations') loadSettings();
-  }, [currentUser, activeTab]);
+  }, [currentUser]);
+
+  // Load settings only when tab is active AND unlocked
+  useEffect(() => {
+    if (activeTab === 'integrations' && !isLocked) {
+        loadSettings();
+    }
+  }, [activeTab, isLocked]);
 
   // --- GLOBAL HANDLERS ---
 
@@ -135,10 +142,10 @@ const Admin: React.FC<AdminProps> = ({ user: currentUser }) => {
     setActionLoading(true);
     try {
       if (deleteModal.user) {
-          await dataService.deleteUser(deleteModal.user.id);
+          await doctorService.deleteUser(deleteModal.user.id);
           showToast('success', 'Usuário removido.');
       } else if (deleteModal.doctor) {
-          await dataService.deleteDoctor(deleteModal.doctor.id);
+          await doctorService.deleteDoctor(deleteModal.doctor.id);
           showToast('success', 'Médico removido.');
       }
       await loadData();
@@ -155,7 +162,7 @@ const Admin: React.FC<AdminProps> = ({ user: currentUser }) => {
     if (!resetModal.user || !newPassword) return;
     setActionLoading(true);
     try {
-      await dataService.resetPassword(resetModal.user.id, newPassword);
+      await doctorService.resetPassword(resetModal.user.id, newPassword);
       setResetModal({ isOpen: false, user: null });
       showToast('success', `Senha de ${resetModal.user.name} alterada!`);
     } catch (error) {
@@ -169,14 +176,15 @@ const Admin: React.FC<AdminProps> = ({ user: currentUser }) => {
       e.preventDefault();
       setActionLoading(true);
       try {
-          // This verifies against the CURRENT stored password of the OWNER role user.
           const isValid = await authService.verifyMasterPassword(unlockPassword);
           if (isValid) {
               setIsFeaturesUnlocked(true);
               setIsUnlockModalOpen(false);
               showToast('success', 'Acesso desbloqueado pelo Super-Admin.');
+              // Trigger settings load immediately after unlock
+              loadSettings();
           } else {
-              showToast('error', 'Senha de Super-Admin incorreta.');
+              showToast('error', 'Senha de Dono / Super-Admin incorreta.');
           }
       } catch (error) {
           showToast('error', 'Erro na verificação.');
@@ -186,7 +194,6 @@ const Admin: React.FC<AdminProps> = ({ user: currentUser }) => {
       }
   };
 
-  // Helper to get role color
   const getRoleColor = (role: string) => {
       switch(role) {
           case UserRole.OWNER: return 'bg-purple-100 text-purple-700 border-purple-200';
@@ -196,9 +203,6 @@ const Admin: React.FC<AdminProps> = ({ user: currentUser }) => {
       }
   };
   const getUserOrg = (user: User) => organizations.find(o => o.id === user.clinicId);
-
-  // Lock logic: Only unlocked for OWNER or if password verified
-  const isLocked = !(isFeaturesUnlocked || currentUser.role === UserRole.OWNER);
 
   return (
     <div className={`mx-auto pb-10 relative p-8 animate-in fade-in duration-500 ${activeTab === 'automations' ? 'max-w-6xl' : 'max-w-4xl'}`}>
@@ -301,7 +305,9 @@ const Admin: React.FC<AdminProps> = ({ user: currentUser }) => {
               <AdminIntegrations 
                 currentUser={currentUser}
                 settings={settings}
-                onSettingsSaved={loadSettings}
+                onSettingsSaved={() => {
+                    loadSettings(); // Reload to refresh state
+                }}
               />
           </LockedContent>
       )}
@@ -314,11 +320,10 @@ const Admin: React.FC<AdminProps> = ({ user: currentUser }) => {
         </LockedContent>
       )}
 
-      {/* --- USER DETAIL POP-UP MODAL --- */}
+      {/* --- USER DETAIL POP-UP MODAL (Same as previous) --- */}
       {selectedUser && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[60] p-4">
             <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md max-h-[90vh] overflow-y-auto animate-in zoom-in-95 duration-200 flex flex-col">
-                {/* Header */}
                 <div className={`p-6 border-b border-gray-100 flex justify-between items-start bg-gradient-to-br ${
                     selectedUser.role === UserRole.OWNER ? 'from-purple-50 to-white' : 
                     selectedUser.role === UserRole.DOCTOR_ADMIN ? 'from-blue-50 to-white' : 'from-emerald-50 to-white'
@@ -349,9 +354,7 @@ const Admin: React.FC<AdminProps> = ({ user: currentUser }) => {
                     </button>
                 </div>
 
-                {/* Body */}
                 <div className="p-6 space-y-4 flex-1 overflow-y-auto">
-                    {/* Organization Info Block */}
                     {getUserOrg(selectedUser) && (
                         <div className="bg-gradient-to-r from-blue-50 to-indigo-50 p-4 rounded-xl border border-blue-100 mb-2">
                             <h4 className="text-xs font-bold text-blue-800 uppercase flex items-center gap-2 mb-2">
@@ -401,7 +404,6 @@ const Admin: React.FC<AdminProps> = ({ user: currentUser }) => {
                     </div>
                 </div>
 
-                {/* Footer Actions */}
                 <div className="p-6 border-t border-gray-100 bg-gray-50/50 flex gap-3">
                     {selectedUser.id !== currentUser.id ? (
                         <>

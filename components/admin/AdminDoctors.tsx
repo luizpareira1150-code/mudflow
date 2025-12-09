@@ -1,8 +1,11 @@
+
+
 import React, { useState } from 'react';
 import { Doctor, Organization, User } from '../../types';
-import { dataService } from '../../services/mockSupabase';
-import { Stethoscope, UserPlus, Users, Calendar, Trash2, FileBadge } from 'lucide-react';
+import { doctorService } from '../../services/mockSupabase';
+import { Stethoscope, UserPlus, Users, Calendar, Trash2, FileBadge, Shield, X } from 'lucide-react';
 import { useToast } from '../ToastProvider';
+import { DoctorPermissionsPanel } from '../DoctorPermissionsPanel';
 
 interface AdminDoctorsProps {
   currentUser: User;
@@ -23,6 +26,7 @@ export const AdminDoctors: React.FC<AdminDoctorsProps> = ({
 }) => {
   const { showToast } = useToast();
   const [newDoctor, setNewDoctor] = useState({ name: '', specialty: 'Clínico Geral', crm: '', color: 'blue' });
+  const [selectedDoctorForPermissions, setSelectedDoctorForPermissions] = useState<Doctor | null>(null);
 
   const handleCreateDoctor = async (e: React.FormEvent) => {
       e.preventDefault();
@@ -34,7 +38,7 @@ export const AdminDoctors: React.FC<AdminDoctorsProps> = ({
       }
 
       try {
-          await dataService.createDoctor({
+          await doctorService.createDoctor({
               organizationId: currentUser.clinicId,
               name: newDoctor.name,
               specialty: newDoctor.specialty,
@@ -150,6 +154,13 @@ export const AdminDoctors: React.FC<AdminDoctorsProps> = ({
                              </div>
                              <div className="flex items-center gap-2">
                                 <button 
+                                    onClick={() => setSelectedDoctorForPermissions(doc)}
+                                    className="p-2 text-purple-600 hover:bg-purple-50 rounded-lg transition-colors"
+                                    title="Permissões de Acesso"
+                                >
+                                    <Shield size={18} />
+                                </button>
+                                <button 
                                     onClick={() => onConfigureAvailability(doc)}
                                     className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
                                     title="Configurar Disponibilidade"
@@ -169,6 +180,38 @@ export const AdminDoctors: React.FC<AdminDoctorsProps> = ({
                      ))}
                 </div>
            </div>
+
+           {/* Permissions Modal */}
+           {selectedDoctorForPermissions && (
+               <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[60] p-4 animate-in fade-in duration-200">
+                   <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg relative animate-in zoom-in-95">
+                        <div className="p-4 border-b border-gray-100 flex justify-between items-center">
+                            <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2">
+                                <Shield size={20} className="text-purple-600" />
+                                Permissões: {selectedDoctorForPermissions.name}
+                            </h3>
+                            <button 
+                                onClick={() => setSelectedDoctorForPermissions(null)}
+                                className="p-1 rounded-full hover:bg-gray-100 transition-colors"
+                            >
+                                <X size={20} className="text-gray-500" />
+                            </button>
+                        </div>
+                        
+                        <div className="p-4 bg-gray-50/50">
+                            <DoctorPermissionsPanel 
+                                doctor={selectedDoctorForPermissions}
+                                organizationId={currentUser.clinicId}
+                                onUpdate={() => {
+                                    // Trigger refresh by invoking create callback (which reloads data)
+                                    onDoctorCreated();
+                                    setSelectedDoctorForPermissions(null);
+                                }}
+                            />
+                        </div>
+                   </div>
+               </div>
+           )}
       </div>
   );
 };

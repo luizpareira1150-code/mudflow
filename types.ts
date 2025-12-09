@@ -1,5 +1,6 @@
 
 
+
 export enum AccountType {
   CONSULTORIO = 'CONSULTORIO',
   CLINICA = 'CLINICA'
@@ -87,6 +88,14 @@ export interface AgendaReleaseSchedule {
 }
 // --------------------------------
 
+// --- DOCTOR ACCESS CONTROL ---
+export enum DoctorAccessControl {
+  ALL = 'ALL',           // Todas as secretárias
+  SELECTED = 'SELECTED', // Apenas selecionadas
+  NONE = 'NONE'          // Ninguém (apenas o médico)
+}
+// --------------------------------
+
 export enum AuditAction {
   USER_LOGIN = 'USER_LOGIN',
   USER_LOGOUT = 'USER_LOGOUT',
@@ -94,6 +103,7 @@ export enum AuditAction {
   USER_DELETED = 'USER_DELETED',
   PASSWORD_RESET = 'PASSWORD_RESET',
   DOCTOR_CREATED = 'DOCTOR_CREATED',
+  DOCTOR_UPDATED = 'DOCTOR_UPDATED', // Added
   DOCTOR_DELETED = 'DOCTOR_DELETED',
   PATIENT_CREATED = 'PATIENT_CREATED',
   PATIENT_UPDATED = 'PATIENT_UPDATED',
@@ -104,7 +114,8 @@ export enum AuditAction {
   CONTACT_CREATED = 'CONTACT_CREATED',
   AGENDA_BLOCKED = 'AGENDA_BLOCKED',
   AGENDA_CONFIG_UPDATED = 'AGENDA_CONFIG_UPDATED',
-  SETTINGS_UPDATED = 'SETTINGS_UPDATED'
+  SETTINGS_UPDATED = 'SETTINGS_UPDATED',
+  SYSTEM_ERROR = 'SYSTEM_ERROR'
 }
 
 export enum AuditSource {
@@ -141,6 +152,10 @@ export interface Doctor {
   specialty: string;
   crm?: string;
   color: string;
+  
+  // Access Control
+  accessControl: DoctorAccessControl;
+  authorizedSecretaries: string[]; // List of User IDs
 }
 
 export interface Patient {
@@ -157,6 +172,7 @@ export interface Patient {
   birthDate?: string;
   createdAt: string;
   updatedAt: string;
+  notes?: string;
 }
 
 export interface Appointment {

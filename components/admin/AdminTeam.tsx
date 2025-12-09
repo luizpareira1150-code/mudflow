@@ -1,6 +1,7 @@
+
 import React, { useState } from 'react';
 import { User, UserRole, AccountType, Organization } from '../../types';
-import { dataService } from '../../services/mockSupabase';
+import { doctorService } from '../../services/mockSupabase';
 import { Users, UserPlus, Building2, Mail, Phone, KeyRound, AlertTriangle, DollarSign, RefreshCw, Trash2 } from 'lucide-react';
 import { useToast } from '../ToastProvider';
 
@@ -43,13 +44,14 @@ export const AdminTeam: React.FC<AdminTeamProps> = ({ currentUser, users, organi
   const handleCreateUser = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      await dataService.createUser({
+      await doctorService.createUser({
         name: newUser.name,
         email: newUser.email,
         username: newUser.username,
         password: newUser.password,
         role: allowedRoleToCreate,
-        clinicId: currentUser.role === UserRole.OWNER ? `clinic_${Date.now()}` : currentUser.clinicId,
+        // GOVERNANCE: Use crypto.randomUUID() instead of Date.now() for Clinic ID
+        clinicId: currentUser.role === UserRole.OWNER ? `clinic_${crypto.randomUUID()}` : currentUser.clinicId,
         accountType: newUser.accountType,
         organizationName: newUser.organizationName,
         phone1: newUser.phone1,

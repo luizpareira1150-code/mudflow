@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { Patient } from '../types';
-import { dataService } from '../services/mockSupabase';
+import { patientService } from '../services/mockSupabase';
 import { Search, UserPlus, X, Check, User as UserIcon } from 'lucide-react';
 import { QuickPatientForm } from './QuickPatientForm';
 
@@ -40,7 +40,7 @@ export const PatientSelector: React.FC<PatientSelectorProps> = ({
     setIsSearching(true);
     searchTimeoutRef.current = setTimeout(async () => {
       try {
-        const results = await dataService.searchPatients(searchTerm, organizationId);
+        const results = await patientService.searchPatients(searchTerm, organizationId);
         setSearchResults(results);
         setShowResults(true);
       } catch (err) {

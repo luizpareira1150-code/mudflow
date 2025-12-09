@@ -1,10 +1,11 @@
 
 import React, { useState, useEffect } from 'react';
 import { User, Doctor, AppointmentStatus } from '../types';
-import { dataService } from '../services/mockSupabase';
+import { appointmentService, settingsService } from '../services/mockSupabase';
 import { DatePicker } from './DatePicker';
 import { X, Lock, AlertCircle, Clock, ChevronDown } from 'lucide-react';
 import { useToast } from './ToastProvider';
+import { sanitizeInput } from '../utils/sanitizer';
 
 interface BlockScheduleModalProps {
   isOpen: boolean;
@@ -65,8 +66,11 @@ export const BlockScheduleModal: React.FC<BlockScheduleModalProps> = ({
 
     setIsSubmitting(true);
 
+    // Sanitize
+    const safeReason = sanitizeInput(reason);
+
     try {
-        const config = await dataService.getAgendaConfig(user.clinicId, selectedDoctorId);
+        const config = await settingsService.getAgendaConfig(user.clinicId, selectedDoctorId);
         const interval = config.intervalMinutes || 30;
 
         const slotsToBlock = [];
@@ -82,7 +86,7 @@ export const BlockScheduleModal: React.FC<BlockScheduleModalProps> = ({
                 date: date,
                 time: timeStr,
                 status: AppointmentStatus.BLOQUEADO,
-                notes: reason || 'Bloqueio Manual'
+                notes: safeReason || 'Bloqueio Manual'
             });
             current.setMinutes(current.getMinutes() + interval);
         }
@@ -93,7 +97,7 @@ export const BlockScheduleModal: React.FC<BlockScheduleModalProps> = ({
              return;
         }
 
-        await dataService.createBatchAppointments(slotsToBlock);
+        await appointmentService.createBatchAppointments(slotsToBlock, user);
         showToast('success', `${slotsToBlock.length} horários bloqueados com sucesso.`);
         onSuccess();
         onClose();

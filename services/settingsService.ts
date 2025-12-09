@@ -59,7 +59,8 @@ export const settingsService = {
       const settings = getStorage<ClinicSettings[]>(STORAGE_KEYS.CLINIC_SETTINGS, initialSettings);
       let clinicSetting = settings.find(s => s.clinicId === clinicId);
       if (!clinicSetting) {
-          clinicSetting = { clinicId, clinicToken: `clinic_${Date.now()}` };
+          // GOVERNANCE: Use crypto.randomUUID()
+          clinicSetting = { clinicId, clinicToken: crypto.randomUUID() };
           settings.push(clinicSetting);
           setStorage(STORAGE_KEYS.CLINIC_SETTINGS, settings);
       }

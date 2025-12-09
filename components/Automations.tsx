@@ -1,7 +1,7 @@
 
 import React, { useState, useRef, useEffect } from 'react';
 import { WebhookLog, Patient } from '../types';
-import { dataService, authService } from '../services/mockSupabase';
+import { patientService, authService } from '../services/mockSupabase';
 import { generateWebhookPayload } from '../services/geminiService';
 import { Play, Activity, Terminal, CheckCircle2, AlertCircle, Clock } from 'lucide-react';
 
@@ -17,7 +17,7 @@ const Automations: React.FC = () => {
   // Load Real Patients
   useEffect(() => {
       if (currentUser) {
-          dataService.getAllPatients(currentUser.clinicId).then(setPatients);
+          patientService.getAllPatients(currentUser.clinicId).then(setPatients);
       }
   }, [currentUser]);
 
@@ -37,7 +37,8 @@ const Automations: React.FC = () => {
         : { id: 'mock_p1', name: 'Paciente Teste (Sem dados reais)', phone: '00000000000' } as Patient;
     
     // Optimistic log add
-    const logId = Math.random().toString(36).substr(2, 9);
+    // GOVERNANCE: Use crypto.randomUUID()
+    const logId = crypto.randomUUID();
     
     setLogs(prev => [...prev, {
       id: logId,

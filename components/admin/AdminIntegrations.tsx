@@ -1,6 +1,7 @@
+
 import React, { useState } from 'react';
 import { ClinicSettings, User } from '../../types';
-import { dataService, authService } from '../../services/mockSupabase';
+import { settingsService, authService } from '../../services/mockSupabase';
 import { Webhook, Shield, CheckCircle, Copy, RefreshCw, MessageSquare, Eye, EyeOff, Link2, Zap, AlertTriangle, Lock, ShieldCheck } from 'lucide-react';
 import { useToast } from '../ToastProvider';
 import { generateApiToken } from '../../services/n8nIntegration';
@@ -40,7 +41,7 @@ export const AdminIntegrations: React.FC<AdminIntegrationsProps> = ({ currentUse
 
         setIsSecurityModalOpen(false);
         setSettingsLoading(true);
-        await dataService.updateClinicSettings(settings);
+        await settingsService.updateClinicSettings(settings);
         showToast('success', 'Configurações de integração salvas!');
         onSettingsSaved();
     } catch (error) {

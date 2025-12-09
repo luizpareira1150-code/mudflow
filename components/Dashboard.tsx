@@ -1,10 +1,12 @@
 
+
 import React, { useEffect, useState } from 'react';
 import { authService } from '../services/mockSupabase';
-import { AppointmentStatus, DashboardMetrics } from '../types';
+import { AppointmentStatus, DashboardMetrics, UserRole } from '../types';
 import { Users, Calendar, ArrowUpRight, Activity } from 'lucide-react';
 import { useRealtimeAppointments, useRealtimePatients } from '../hooks/useRealtimeData';
 import { RealtimeIndicator } from './RealtimeIndicator';
+import { useDoctorsByAccess } from '../hooks/useDoctorsByAccess';
 
 const Dashboard: React.FC = () => {
   const currentUser = authService.getCurrentUser();
@@ -22,6 +24,9 @@ const Dashboard: React.FC = () => {
   const { data: patients, loading: loadingPatients } = useRealtimePatients(
     currentUser.clinicId
   );
+
+  // Fetch Managed Doctors (for Secretary)
+  const { doctors: managedDoctors } = useDoctorsByAccess(currentUser, currentUser.clinicId);
 
   const totalAppointments = todayAppointments?.length || 0;
   const attendedCount = todayAppointments?.filter(a => a.status === AppointmentStatus.ATENDIDO).length || 0;
@@ -76,6 +81,34 @@ const Dashboard: React.FC = () => {
           </div>
         </div>
       </header>
+
+      {/* Secretary Access Info Block */}
+      {currentUser.role === UserRole.SECRETARY && (
+          <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-100 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div>
+                  <h4 className="text-blue-800 font-bold text-sm uppercase tracking-wide mb-1">
+                      Suas Permissões de Acesso
+                  </h4>
+                  <p className="text-xs text-blue-600">
+                      Você está autorizada a gerenciar as agendas dos seguintes médicos:
+                  </p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                  {managedDoctors.length === 0 ? (
+                      <span className="text-xs italic text-gray-500 bg-white px-3 py-1 rounded-full border border-gray-200">
+                          Nenhum médico atribuído ainda.
+                      </span>
+                  ) : (
+                      managedDoctors.map(doc => (
+                          <span key={doc.id} className="text-xs font-bold text-indigo-700 bg-white px-3 py-1 rounded-full border border-indigo-100 shadow-sm flex items-center gap-1">
+                              <span className={`w-1.5 h-1.5 rounded-full bg-${doc.color || 'blue'}-500`}></span>
+                              {doc.name}
+                          </span>
+                      ))
+                  )}
+              </div>
+          </div>
+      )}
 
       {/* Stats Grid */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -159,4 +192,3 @@ const Dashboard: React.FC = () => {
     </div>
   );
 };
-export default Dashboard;

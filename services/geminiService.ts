@@ -5,6 +5,19 @@ import { Patient, Appointment } from '../types';
 const apiKey = process.env.API_KEY || '';
 const ai = apiKey ? new GoogleGenAI({ apiKey }) : null;
 
+/**
+ * Helper to sanitize LLM output before parsing.
+ * Removes Markdown code blocks (```json ... ```) and whitespace.
+ */
+const cleanAIResponse = (text: string): string => {
+  if (!text) return '{}';
+  return text
+    .replace(/^```json\s*/, '') // Remove start block
+    .replace(/^```\s*/, '')     // Remove generic start block
+    .replace(/\s*```$/, '')     // Remove end block
+    .trim();
+};
+
 export const generateSmartSummary = async (patient: Patient, appointments: Appointment[]): Promise<string> => {
   if (!ai) {
     const total = appointments.length;
@@ -73,7 +86,7 @@ export const generateWebhookPayload = async (event: string, contextData: any): P
       Generate a realistic JSON webhook payload for a medical CRM system integrating with N8N.
       Event Type Requested: ${event}
       Context Data provided: ${JSON.stringify(contextData)}
-      Return ONLY the JSON.
+      Return ONLY the JSON. Do not add markdown formatting.
     `;
 
     const response = await ai.models.generateContent({
@@ -86,7 +99,12 @@ export const generateWebhookPayload = async (event: string, contextData: any): P
 
     const text = response.text;
     if (text) {
-        return JSON.parse(text);
+        try {
+            return JSON.parse(cleanAIResponse(text));
+        } catch (parseError) {
+            console.warn("Failed to parse AI JSON, retrying cleanup...", text);
+            return { error: "Invalid JSON format from AI" };
+        }
     }
     return { error: "Empty response" };
     

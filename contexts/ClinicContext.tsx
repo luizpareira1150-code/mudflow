@@ -1,7 +1,7 @@
 
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { Doctor, Organization, UserRole } from '../types';
-import { dataService } from '../services/mockSupabase';
+import { doctorService } from '../services/doctorService';
 import { useAuth } from './AuthContext';
 
 interface ClinicContextType {
@@ -23,13 +23,18 @@ export const ClinicProvider: React.FC<{ children: ReactNode }> = ({ children }) 
   const [loading, setLoading] = useState(false);
 
   const loadContext = async () => {
-    if (!user || user.role === UserRole.OWNER) return;
+    // Only load context if user is logged in. 
+    // OWNERs usually manage all, but for specific clinic context inside Admin, logic differs.
+    // For the main App view (Agenda/CRM), we definitely need the filtered list.
+    if (!user) return;
 
     setLoading(true);
     try {
+      // ✅ SECURITY FIX: Fetch doctors filtered by the user's access permissions
+      // Instead of getDoctors (all), we use getDoctorsForUser (filtered)
       const [org, docs] = await Promise.all([
-        dataService.getOrganization(user.clinicId),
-        dataService.getDoctors(user.clinicId)
+        doctorService.getOrganization(user.clinicId),
+        doctorService.getDoctorsForUser(user) 
       ]);
 
       setOrganization(org);
@@ -37,7 +42,7 @@ export const ClinicProvider: React.FC<{ children: ReactNode }> = ({ children }) 
 
       // Smart selection of doctor ID
       if (docs.length > 0) {
-        // If current selection is invalid (doctor deleted), select first one
+        // If current selection is invalid (doctor deleted or access revoked), select first one
         if (!selectedDoctorId || !docs.find(d => d.id === selectedDoctorId)) {
           setSelectedDoctorId(docs[0].id);
         }
@@ -62,7 +67,7 @@ export const ClinicProvider: React.FC<{ children: ReactNode }> = ({ children }) 
     }
   }, [user]);
 
-  // Listen for external updates (e.g. from Admin panel creating a doctor)
+  // Listen for external updates (e.g. from Admin panel creating a doctor or changing permissions)
   useEffect(() => {
     const handleUpdate = () => loadContext();
     window.addEventListener('medflow:doctors-updated', handleUpdate);
@@ -75,7 +80,7 @@ export const ClinicProvider: React.FC<{ children: ReactNode }> = ({ children }) 
       doctors, 
       selectedDoctorId, 
       setSelectedDoctorId, 
-      refreshContext: loadContext,
+      refreshContext: loadContext, 
       loading 
     }}>
       {children}

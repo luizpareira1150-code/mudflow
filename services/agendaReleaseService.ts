@@ -1,5 +1,6 @@
 
 import { AgendaReleaseSchedule, AgendaReleaseType, DayOfWeek } from '../types';
+import { createDateAtHour } from '../utils/dateUtils';
 
 const RELEASE_SCHEDULE_KEY = 'medflow_agenda_release_schedule';
 
@@ -36,7 +37,8 @@ class AgendaReleaseService {
     } else {
       const newSchedule: AgendaReleaseSchedule = {
         ...schedule,
-        id: `release_${Date.now()}`,
+        // GOVERNANCE: Use crypto.randomUUID()
+        id: crypto.randomUUID(),
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
       };
@@ -62,7 +64,8 @@ class AgendaReleaseService {
     }
 
     const now = new Date();
-    const target = new Date(targetDate + 'T00:00:00');
+    // ✅ FIX: Use consistent timezone helper to ensure 00:00 aligns with -03:00 (Brasilia)
+    const target = createDateAtHour(targetDate, '00:00');
 
     switch (schedule.releaseType) {
       case AgendaReleaseType.WEEKLY_RELEASE:
@@ -128,7 +131,6 @@ class AgendaReleaseService {
     targetWeekStart.setHours(0,0,0,0);
     
     // Passo 2: Calcular a Data de Liberação para ESSA semana específica
-    // Se a regra é "Abre segunda", então para a semana de 01/Dez (Dom), abre 02/Dez (Seg).
     const releaseDateForTarget = new Date(targetWeekStart);
     releaseDateForTarget.setDate(targetWeekStart.getDate() + dayOfWeek);
     
@@ -149,7 +151,6 @@ class AgendaReleaseService {
 
   // --- LÓGICA DR. JOÃO (MENSAL) ---
   // Agenda abre dia 21 para o mês seguinte.
-  // Ex: Para agendar 05/Dezembro, a liberação foi 21/Novembro.
   private checkMonthlyRelease(
     schedule: AgendaReleaseSchedule,
     now: Date,
@@ -160,33 +161,24 @@ class AgendaReleaseService {
     
     const { releaseDay, fallbackToWeekday, hour, targetMonthOffset } = schedule.monthlyConfig;
     
-    // Passo 1: Determinar o mês alvo do agendamento (Ex: Dezembro/2025)
     const targetYear = target.getFullYear();
     const targetMonth = target.getMonth(); // 0-11
     
-    // Passo 2: Calcular quando esse mês deveria ter sido liberado
-    // Se offset é 1, Dezembro foi liberado em Novembro.
     let releaseMonth = targetMonth - targetMonthOffset;
     let releaseYear = targetYear;
     
-    // Ajustar virada de ano (Ex: Janeiro liberado em Dezembro do ano anterior)
     while (releaseMonth < 0) {
         releaseMonth += 12;
         releaseYear -= 1;
     }
     
-    // Passo 3: Construir a data exata de liberação
     let releaseDateForTarget = new Date(releaseYear, releaseMonth, releaseDay);
     
-    // Lógica de Fallback (Dia útil) se configurado
     if (fallbackToWeekday) {
       const day = releaseDateForTarget.getDay();
-      // Se cair Sábado (6), vai pra Segunda (+2) - Seguinte (FORWARD)
       if (day === 6) {
         releaseDateForTarget.setDate(releaseDateForTarget.getDate() + 2);
-      } 
-      // Se cair Domingo (0), vai pra Segunda (+1) - Seguinte (FORWARD)
-      else if (day === 0) {
+      } else if (day === 0) {
         releaseDateForTarget.setDate(releaseDateForTarget.getDate() + 1);
       }
     }
@@ -194,7 +186,6 @@ class AgendaReleaseService {
     const [releaseHour, releaseMinute] = hour.split(':').map(Number);
     releaseDateForTarget.setHours(releaseHour, releaseMinute, 0, 0);
     
-    // Passo 4: Comparar
     if (now >= releaseDateForTarget) {
       return { released: true };
     } else {
@@ -217,12 +208,13 @@ class AgendaReleaseService {
     }
     
     for (const custom of schedule.customDates) {
-      const start = new Date(custom.targetStartDate + 'T00:00:00');
-      const end = new Date(custom.targetEndDate + 'T23:59:59');
+      // ✅ FIX: Use timezone helper
+      const start = createDateAtHour(custom.targetStartDate, '00:00');
+      const end = createDateAtHour(custom.targetEndDate, '23:59');
       
       // Se a data alvo está dentro deste intervalo customizado
       if (target >= start && target <= end) {
-        const releaseDate = new Date(custom.releaseDate + 'T00:00:00');
+        const releaseDate = createDateAtHour(custom.releaseDate, '00:00');
         
         if (now >= releaseDate) {
           return { released: true };
@@ -236,13 +228,8 @@ class AgendaReleaseService {
       }
     }
     
-    // Se não caiu em nenhuma regra customizada, assume liberado ou bloqueado?
-    // Geralmente em custom dates, se não está definido, está aberto, ou fechado.
-    // Vamos assumir aberto para datas não especificadas nas regras custom.
     return { released: true };
   }
-
-  // --- WINDOW CALCULATORS FOR UI HINTS ---
 
   private calculateWeeklyWindow(
     schedule: AgendaReleaseSchedule, 
@@ -251,29 +238,20 @@ class AgendaReleaseService {
     if (!schedule.weeklyConfig) throw new Error('Config missing');
     const { dayOfWeek } = schedule.weeklyConfig;
 
-    // A janela "aberta" começa na liberação mais recente que já aconteceu.
-    // Encontrar o dia de liberação desta semana
     const currentWeekStart = new Date(now);
     currentWeekStart.setDate(now.getDate() - now.getDay());
     currentWeekStart.setHours(0,0,0,0);
 
     const releaseThisWeek = new Date(currentWeekStart);
-    releaseThisWeek.setDate(currentWeekStart.getDate() + dayOfWeek); // Ex: Segunda desta semana
+    releaseThisWeek.setDate(currentWeekStart.getDate() + dayOfWeek); 
 
-    // Se já passou da liberação desta semana, a janela é para ESSA semana.
-    // Se ainda não passou (Ex: Domingo), a janela ativa é a da semana PASSADA.
-    
     let activeReleaseDate = releaseThisWeek;
     if (now < releaseThisWeek) {
         activeReleaseDate.setDate(activeReleaseDate.getDate() - 7);
     }
 
-    // A janela vai da data de liberação até o fim da semana alvo?
-    // No caso do Dr André, ele libera Segunda para Quarta. 
-    // Vamos simplificar: A janela começa Hoje e vai até o fim da semana liberada.
-    
     const targetWeekEnd = new Date(activeReleaseDate);
-    targetWeekEnd.setDate(activeReleaseDate.getDate() + (6 - dayOfWeek)); // Vai até Sábado da semana de liberação
+    targetWeekEnd.setDate(activeReleaseDate.getDate() + (6 - dayOfWeek)); 
     targetWeekEnd.setHours(23,59,59,999);
 
     return { startDate: now, endDate: targetWeekEnd };
@@ -286,35 +264,18 @@ class AgendaReleaseService {
     if (!schedule.monthlyConfig) throw new Error('Config missing');
     const { targetMonthOffset } = schedule.monthlyConfig;
 
-    // A janela vai até o fim do último mês liberado.
-    // Se hoje é 15/Nov (Dr João), a última liberação foi 21/Out para NOVEMBRO.
-    // A próxima é 21/Nov para DEZEMBRO.
-    
-    // Então a janela atual é até 30/Nov.
-    
-    // Algoritmo: Encontrar qual foi a última data de liberação válida (no passado)
-    // E ver qual mês ela liberou.
-    
-    // Simplificação: Pegar o mês atual. Calcular quando ele foi liberado.
-    // Se já foi, o fim da janela é o fim deste mês.
-    // Se o mês seguinte JÁ foi liberado (estamos dia 22/Nov), o fim é o fim do mês seguinte.
-
     const currentMonthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
     
-    // Verificar se o mês SEGUINTE já foi liberado
     const nextMonth = new Date(now);
     nextMonth.setMonth(nextMonth.getMonth() + 1);
-    nextMonth.setDate(1); // Dia 1 do mês seguinte
+    nextMonth.setDate(1);
     
-    // Check if next month is released
     const checkNext = this.checkMonthlyRelease(schedule, now, nextMonth);
     
     if (checkNext.released) {
-        // Se mês que vem tá liberado, a janela vai até o fim dele
         const nextMonthEnd = new Date(nextMonth.getFullYear(), nextMonth.getMonth() + 1, 0, 23, 59, 59);
         return { startDate: now, endDate: nextMonthEnd };
     } else {
-        // Se não, vai até o fim do mês atual
         return { startDate: now, endDate: currentMonthEnd };
     }
   }

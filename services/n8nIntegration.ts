@@ -11,10 +11,33 @@ import { STORAGE_KEYS, getStorage, setStorage } from './storage';
 import { monitoringService } from './monitoring';
 import { z } from 'zod';
 
+// Crypto-safe Random ID Generator for Token
 export const generateApiToken = (clinicId: string): string => {
   const timestamp = Date.now();
-  const random = Math.random().toString(36).substring(2, 15);
-  return `medflow_${clinicId}_${timestamp}_${random}`;
+  // Use Crypto API for secure random values
+  const array = new Uint8Array(24);
+  window.crypto.getRandomValues(array);
+  const randomHex = Array.from(array)
+    .map(b => b.toString(16).padStart(2, '0'))
+    .join('');
+    
+  return `medflow_${clinicId}_${timestamp}_${randomHex}`;
+};
+
+/**
+ * Constant-time comparison function to prevent timing attacks.
+ * This ensures the comparison takes the same amount of time regardless 
+ * of how many characters match.
+ */
+const timingSafeEqual = (a: string, b: string): boolean => {
+    if (a.length !== b.length) {
+        return false;
+    }
+    let mismatch = 0;
+    for (let i = 0; i < a.length; i++) {
+        mismatch |= (a.charCodeAt(i) ^ b.charCodeAt(i));
+    }
+    return mismatch === 0;
 };
 
 export interface N8NOutgoingPayload {
@@ -62,10 +85,29 @@ class N8NIntegrationServiceClass {
   private queue: WebhookQueueItem[] = [];
   private readonly MAX_RETRIES = 5;
   private readonly QUEUE_CHECK_INTERVAL = 30000; 
+  private queueIntervalId: any = null;
+  private isProcessing = false;
 
   constructor() {
     this.loadQueue();
-    setInterval(() => this.processQueue(), this.QUEUE_CHECK_INTERVAL);
+    // FIX: Process stale items immediately on load. 
+    // This handles cases where items were scheduled for retry while the browser was closed.
+    this.processQueue();
+  }
+
+  public start() {
+    if (this.queueIntervalId) return;
+    console.log('[N8N] Starting Webhook Queue Worker');
+    this.processQueue(); // Run immediately on start
+    this.queueIntervalId = setInterval(() => this.processQueue(), this.QUEUE_CHECK_INTERVAL);
+  }
+
+  public stop() {
+    if (this.queueIntervalId) {
+        clearInterval(this.queueIntervalId);
+        this.queueIntervalId = null;
+        console.log('[N8N] Stopped Webhook Queue Worker');
+    }
   }
 
   private loadQueue() {
@@ -78,18 +120,21 @@ class N8NIntegrationServiceClass {
 
   private addToQueue(url: string, payload: any, headers: any) {
     const newItem: WebhookQueueItem = {
-      id: Math.random().toString(36).substr(2, 9),
+      id: crypto.randomUUID(), // Updated to secure ID
       url,
       payload,
       headers,
       retryCount: 0,
-      nextRetry: Date.now(),
+      nextRetry: Date.now(), // Retry immediately via worker
       createdAt: Date.now(),
       status: 'PENDING'
     };
     this.queue.push(newItem);
     this.saveQueue();
     monitoringService.trackMetric('webhook_queue_size', this.queue.length);
+    
+    // Trigger processing immediately so we don't wait 30s for the first retry
+    this.processQueue();
   }
 
   private calculateBackoff(retryCount: number): number {
@@ -99,45 +144,53 @@ class N8NIntegrationServiceClass {
   }
 
   private async processQueue() {
-    if (this.queue.length === 0) return;
+    // Prevent concurrent execution to avoid double-sending
+    if (this.isProcessing || this.queue.length === 0) return;
+    this.isProcessing = true;
 
-    const now = Date.now();
-    const pendingItems = this.queue.filter(item => item.nextRetry <= now && item.status !== 'FAILED');
+    try {
+        const now = Date.now();
+        const pendingItems = this.queue.filter(item => item.nextRetry <= now && item.status !== 'FAILED');
 
-    for (const item of pendingItems) {
-      try {
-        const response = await fetch(item.url, {
-          method: 'POST',
-          headers: item.headers,
-          body: JSON.stringify(item.payload)
-        });
+        for (const item of pendingItems) {
+          try {
+            const response = await fetch(item.url, {
+              method: 'POST',
+              headers: item.headers,
+              body: JSON.stringify(item.payload)
+            });
 
-        if (!response.ok) {
-          throw new Error(`HTTP ${response.status}`);
-        }
+            if (!response.ok) {
+              throw new Error(`HTTP ${response.status}`);
+            }
 
-        this.queue = this.queue.filter(q => q.id !== item.id);
-        this.saveQueue();
-        monitoringService.trackMetric('webhook_worker_success', 1, { url: item.url });
+            // Success: Remove from queue
+            this.queue = this.queue.filter(q => q.id !== item.id);
+            this.saveQueue();
+            monitoringService.trackMetric('webhook_worker_success', 1, { url: item.url });
 
-      } catch (error) {
-        monitoringService.trackError(error as Error, { source: 'WebhookWorker', itemId: item.id });
+          } catch (error) {
+            // Failure: Update retry count and backoff
+            monitoringService.trackError(error as Error, { source: 'WebhookWorker', itemId: item.id });
 
-        const index = this.queue.findIndex(q => q.id === item.id);
-        if (index !== -1) {
-          const updatedItem = this.queue[index];
-          updatedItem.retryCount += 1;
-          
-          if (updatedItem.retryCount >= this.MAX_RETRIES) {
-            updatedItem.status = 'FAILED';
-            monitoringService.trackEvent('webhook_permanent_failure', { itemId: item.id, url: item.url });
-          } else {
-            updatedItem.nextRetry = Date.now() + this.calculateBackoff(updatedItem.retryCount);
+            const index = this.queue.findIndex(q => q.id === item.id);
+            if (index !== -1) {
+              const updatedItem = this.queue[index];
+              updatedItem.retryCount += 1;
+              
+              if (updatedItem.retryCount >= this.MAX_RETRIES) {
+                updatedItem.status = 'FAILED';
+                monitoringService.trackEvent('webhook_permanent_failure', { itemId: item.id, url: item.url });
+              } else {
+                updatedItem.nextRetry = Date.now() + this.calculateBackoff(updatedItem.retryCount);
+              }
+              this.queue[index] = updatedItem;
+              this.saveQueue();
+            }
           }
-          this.queue[index] = updatedItem;
-          this.saveQueue();
         }
-      }
+    } finally {
+        this.isProcessing = false;
     }
   }
 
@@ -160,12 +213,10 @@ class N8NIntegrationServiceClass {
       'X-Evolution-Instance': payload.context?.evolution?.instanceName || ''
     };
 
-    let attempts = 0;
-    const IMMEDIATE_RETRIES = 2;
     const startTime = performance.now();
 
-    while (attempts <= IMMEDIATE_RETRIES) {
-      try {
+    try {
+        // Attempt immediate delivery
         const response = await fetch(settings.n8nWebhookUrl, {
           method: 'POST',
           headers,
@@ -178,18 +229,13 @@ class N8NIntegrationServiceClass {
         
         const duration = performance.now() - startTime;
         monitoringService.trackMetric('webhook_outbound_latency', duration, { event: payload.event });
-        return; 
 
-      } catch (error) {
-        attempts++;
-        if (attempts <= IMMEDIATE_RETRIES) {
-          const delay = 1000 * attempts;
-          await new Promise(r => setTimeout(r, delay));
-        } else {
-          monitoringService.trackMetric('webhook_outbound_failure_queued', 1, { event: payload.event });
-          this.addToQueue(settings.n8nWebhookUrl, payload, headers);
-        }
-      }
+    } catch (error) {
+        // High Reliability: On ANY failure, immediately persist to queue.
+        // We removed the in-memory while/setTimeout loop to prevent data loss if the browser is closed during the wait.
+        console.warn('[N8N] Webhook failed, queuing for retry', error);
+        monitoringService.trackMetric('webhook_outbound_failure_queued', 1, { event: payload.event });
+        this.addToQueue(settings.n8nWebhookUrl, payload, headers);
     }
   }
 
@@ -210,7 +256,12 @@ class N8NIntegrationServiceClass {
 
     try {
         const expectedToken = validTokens.get(clinicId);
-        if (!expectedToken || rawPayload.authToken !== expectedToken) {
+        
+        // SECURITY UPGRADE: Use timingSafeEqual instead of direct comparison
+        const receivedToken = rawPayload.authToken || '';
+        const isValidToken = expectedToken && timingSafeEqual(receivedToken, expectedToken);
+
+        if (!isValidToken) {
           throw new Error('Acesso Negado: Token de autenticação inválido.');
         }
 

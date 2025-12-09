@@ -11,21 +11,22 @@ export const authService = {
       const user = users.find(u => u.username === username);
       
       if (user) {
-          let isValid = false;
-          // Support migration from plain text to bcrypt
-          if (passwordService.needsMigration(user.passwordHash)) {
-             isValid = user.passwordHash.replace('PLAIN:', '') === pass;
-             if (isValid) {
-                 // Migrate to bcrypt on successful login
-                 user.passwordHash = await passwordService.hashPassword(pass);
-                 setStorage(STORAGE_KEYS.USERS, users);
-                 console.log(`[AUTH] Migrated password for ${user.username}`);
-             }
-          } else {
-             isValid = await passwordService.verifyPassword(pass, user.passwordHash);
-          }
+          // STRICT SECURITY: Delegate all verification to passwordService.
+          // Removed legacy 'PLAIN:' text check to prevent injection vulnerabilities.
+          const isValid = await passwordService.verifyPassword(pass, user.passwordHash);
 
           if (isValid) {
+              // Migration Strategy: If valid but using old format (Legacy Bcrypt or Seed Token), upgrade to WebCrypto
+              if (passwordService.needsMigration(user.passwordHash)) {
+                 try {
+                     user.passwordHash = await passwordService.hashPassword(pass);
+                     setStorage(STORAGE_KEYS.USERS, users);
+                     console.log(`[AUTH] Migrated password for ${user.username} to WebCrypto`);
+                 } catch (e) {
+                     console.error('[AUTH] Failed to migrate password', e);
+                 }
+              }
+
               const { passwordHash, ...safeUser } = user;
               localStorage.setItem(STORAGE_KEYS.CURRENT_USER, JSON.stringify(safeUser));
               
@@ -74,6 +75,7 @@ export const authService = {
       const users = getStorage<StoredUser[]>(STORAGE_KEYS.USERS, initialUsers);
       const storedUser = users.find(u => u.id === currentUser.id);
       if (!storedUser) return false;
+      
       return passwordService.verifyPassword(pass, storedUser.passwordHash);
   },
 
@@ -96,7 +98,7 @@ export const authService = {
           return false;
       }
       
-      // Verifica a senha fornecida contra o hash atual do Dono
+      // STRICT SECURITY: Use standardized verification
       return passwordService.verifyPassword(pass, owner.passwordHash);
   }
 };

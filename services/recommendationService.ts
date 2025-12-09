@@ -1,4 +1,5 @@
-import { dataService } from './mockSupabase';
+
+import { appointmentService } from './appointmentService';
 import { AvailableSlot, RecommendedSlot } from '../types';
 
 export const recommendationService = {
@@ -8,7 +9,7 @@ export const recommendationService = {
     patientId: string
   ): Promise<RecommendedSlot[]> => {
     // 1. Analyze Patient History
-    const history = await dataService.getPatientAppointments(patientId);
+    const history = await appointmentService.getPatientAppointments(patientId);
     
     // Default values if no history
     let preferredDayOfWeek: number | null = null;
@@ -57,7 +58,7 @@ export const recommendationService = {
         const dateStr = d.toISOString().split('T')[0];
         
         // Fetch slots for this day
-        const slots = await dataService.getAvailableSlots(clinicId, doctorId, dateStr);
+        const slots = await appointmentService.getAvailableSlots(clinicId, doctorId, dateStr);
         const available = slots.filter(s => !s.isBooked && !s.isReserved);
         
         const dayOfWeek = d.getDay();

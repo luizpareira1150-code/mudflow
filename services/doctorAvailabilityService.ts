@@ -1,8 +1,7 @@
 
-
 import { DoctorAvailability, DoctorAbsence, DayOfWeek, AvailabilityValidationResult } from '../types';
 import { STORAGE_KEYS, getStorage, setStorage, initialAvailability } from './storage';
-import { getDayOfWeekBR } from '../utils/dateUtils';
+import { getDayOfWeekBR, timeToMinutes, addDays } from '../utils/dateUtils';
 
 class DoctorAvailabilityService {
   
@@ -47,7 +46,8 @@ class DoctorAvailabilityService {
     } else {
       result = {
         ...availability,
-        id: `avail_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
+        // GOVERNANCE: Use crypto.randomUUID()
+        id: crypto.randomUUID(),
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
       };
@@ -66,7 +66,8 @@ class DoctorAvailabilityService {
     if (availability) {
         const newAbsence: DoctorAbsence = {
             ...absence,
-            id: `abs_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
+            // GOVERNANCE: Use crypto.randomUUID()
+            id: crypto.randomUUID(),
             createdAt: new Date().toISOString()
         };
         availability.absences.push(newAbsence);
@@ -90,61 +91,47 @@ class DoctorAvailabilityService {
   }
 
   /**
-   * Valida se médico está disponível em determinada data
-   * @param computeSuggestions Se true, calcula próximas datas em caso de falha. Se false, apenas retorna status (evita recursão infinita).
+   * Internal pure function to check availability rules without side effects or fetching.
+   * Optimized for usage inside loops.
    */
-  async validateAvailability(
-    doctorId: string, 
-    organizationId: string, 
-    date: string,
-    time?: string,
-    computeSuggestions: boolean = true
-  ): Promise<AvailabilityValidationResult> {
-    const availability = await this.getDoctorAvailability(doctorId, organizationId);
-    
+  private checkAvailabilityRules(
+    availability: DoctorAvailability | null, 
+    date: string, 
+    time?: string
+  ): AvailabilityValidationResult {
     if (!availability) {
       return { isAvailable: true }; // Se não configurou, permite tudo (fallback)
     }
 
-    // Timezone safe logic
     const dayOfWeek = getDayOfWeekBR(date) as DayOfWeek;
 
     // 1. Verificar períodos de ausência
-    const absences = availability.absences;
-    for (const absence of absences) {
+    for (const absence of availability.absences) {
       if (date >= absence.startDate && date <= absence.endDate) {
-        // CORREÇÃO DE LOOP INFINITO: Só busca sugestões se a flag permitir
-        const nextAvailableDates = computeSuggestions 
-            ? await this.getNextAvailableDates(doctorId, organizationId, absence.endDate, 5)
-            : [];
-            
         return {
           isAvailable: false,
-          reason: `Médico em ${absence.type.toLowerCase()}: ${absence.reason}`,
-          suggestedDates: nextAvailableDates
+          reason: `Médico em ${absence.type.toLowerCase()}: ${absence.reason}`
         };
       }
     }
 
     // 2. Verificar se o dia da semana está configurado
     const dayConfig = availability.weekSchedule[dayOfWeek];
+    const dayNameMap = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
+    const dayName = dayNameMap[dayOfWeek];
+
     if (!dayConfig || !dayConfig.enabled) {
-      const nextAvailableDates = computeSuggestions 
-        ? await this.getNextAvailableDates(doctorId, organizationId, date, 5)
-        : [];
-        
       return {
         isAvailable: false,
-        reason: `Médico não atende às ${this.getDayName(dayOfWeek)}s`,
-        suggestedDates: nextAvailableDates
+        reason: `Médico não atende às ${dayName}s`
       };
     }
 
     // 3. Verificar horário (se fornecido)
     if (time && dayConfig.startTime && dayConfig.endTime) {
-      const timeNum = this.timeToMinutes(time);
-      const startNum = this.timeToMinutes(dayConfig.startTime);
-      const endNum = this.timeToMinutes(dayConfig.endTime);
+      const timeNum = timeToMinutes(time);
+      const startNum = timeToMinutes(dayConfig.startTime);
+      const endNum = timeToMinutes(dayConfig.endTime);
       
       if (timeNum < startNum || timeNum >= endNum) {
         return {
@@ -156,10 +143,7 @@ class DoctorAvailabilityService {
 
     // 4. Verificar limite de antecedência
     if (availability.advanceBookingDays) {
-      // Comparação simples de string data para evitar timezone shift
       const today = new Date().toISOString().split('T')[0];
-      
-      // Cálculo aproximado de diferença em dias
       const d1 = new Date(today);
       const d2 = new Date(date);
       const diffTime = d2.getTime() - d1.getTime();
@@ -177,7 +161,42 @@ class DoctorAvailabilityService {
   }
 
   /**
-   * Retorna próximas datas disponíveis
+   * Valida se médico está disponível em determinada data
+   * @param computeSuggestions Se true, calcula próximas datas em caso de falha.
+   */
+  async validateAvailability(
+    doctorId: string, 
+    organizationId: string, 
+    date: string,
+    time?: string,
+    computeSuggestions: boolean = true
+  ): Promise<AvailabilityValidationResult> {
+    const availability = await this.getDoctorAvailability(doctorId, organizationId);
+    
+    // Reuse internal optimized logic
+    const result = this.checkAvailabilityRules(availability, date, time);
+
+    if (!result.isAvailable && computeSuggestions) {
+        // If reason was absence, try to suggest starting from end of absence
+        let startSearchDate = date;
+        
+        if (availability) {
+            const absence = availability.absences.find(a => date >= a.startDate && date <= a.endDate);
+            if (absence) {
+                startSearchDate = absence.endDate;
+            }
+        }
+
+        // Avoid infinite recursion by calling optimized getNextAvailableDates (which uses checkAvailabilityRules)
+        result.suggestedDates = await this.getNextAvailableDates(doctorId, organizationId, startSearchDate, 5);
+    }
+
+    return result;
+  }
+
+  /**
+   * Retorna próximas datas disponíveis.
+   * OPTIMIZED: Fetches availability once and uses sync check in loop.
    */
   async getNextAvailableDates(
     doctorId: string, 
@@ -187,48 +206,31 @@ class DoctorAvailabilityService {
   ): Promise<string[]> {
     const availableDates: string[] = [];
     
-    // Parse input date
-    const [y, m, d] = fromDate.split('-').map(Number);
-    let currentDate = new Date(y, m - 1, d);
-    
+    // OPTIMIZATION: Fetch once, reuse in loop
+    const availability = await this.getDoctorAvailability(doctorId, organizationId);
+
+    let currentDateStr = fromDate;
     let attempts = 0;
     const maxAttempts = 60; // Buscar até 60 dias à frente
 
     while (availableDates.length < count && attempts < maxAttempts) {
-      currentDate.setDate(currentDate.getDate() + 1);
+      currentDateStr = addDays(currentDateStr, 1);
       attempts++;
 
-      // Format back to YYYY-MM-DD
-      const year = currentDate.getFullYear();
-      const month = String(currentDate.getMonth() + 1).padStart(2, '0');
-      const day = String(currentDate.getDate()).padStart(2, '0');
-      const dateStr = `${year}-${month}-${day}`;
-
-      // CRITICAL FIX: Pass false to avoid recursion loop
-      const validation = await this.validateAvailability(doctorId, organizationId, dateStr, undefined, false);
+      // Use optimized synchronous check
+      const result = this.checkAvailabilityRules(availability, currentDateStr);
       
-      if (validation.isAvailable) {
-        availableDates.push(dateStr);
+      if (result.isAvailable) {
+        availableDates.push(currentDateStr);
+      }
+
+      // PREVENTION: Yield to event loop every 10 iterations to prevent UI blocking
+      if (attempts % 10 === 0) {
+          await new Promise(resolve => setTimeout(resolve, 0));
       }
     }
 
     return availableDates;
-  }
-
-  /**
-   * Helper: Converte HH:MM para minutos
-   */
-  private timeToMinutes(time: string): number {
-    const [hours, minutes] = time.split(':').map(Number);
-    return hours * 60 + minutes;
-  }
-
-  /**
-   * Helper: Nome do dia da semana
-   */
-  private getDayName(day: DayOfWeek): string {
-    const names = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
-    return names[day];
   }
 
   /**

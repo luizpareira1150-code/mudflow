@@ -1,19 +1,22 @@
 
 import React, { useState, useEffect } from 'react';
 import { X, AlertCircle, FileText, Calendar, Clock, Stethoscope, ChevronDown, User, Phone, CreditCard } from 'lucide-react';
-import { dataService } from '../services/mockSupabase';
-import { Patient, PatientStatus, AppointmentStatus } from '../types';
+import { authService, settingsService, doctorService, patientService } from '../services/mockSupabase';
+import { appointmentService } from '../services/appointmentService';
+import { Patient, PatientStatus } from '../types';
 import { useToast } from './ToastProvider';
 import { validateCPF, formatCPF } from '../utils/cpfUtils';
 import { formatPhone } from '../utils/phoneUtils';
 import { validateSafe } from '../utils/validator';
 import { PatientSchema } from '../utils/validationSchemas';
 import { DatePicker } from './DatePicker';
+import { sanitizeInput } from '../utils/sanitizer';
 
 interface QuickPatientFormProps {
   organizationId: string;
   onSuccess: (patient: Patient) => void;
   onCancel: () => void;
+  onConflict?: () => void;
   initialName?: string;
   initialDate?: string;
   initialTime?: string;
@@ -24,6 +27,7 @@ export const QuickPatientForm: React.FC<QuickPatientFormProps> = ({
   organizationId, 
   onSuccess, 
   onCancel,
+  onConflict,
   initialName = '',
   initialDate,
   initialTime,
@@ -56,8 +60,8 @@ export const QuickPatientForm: React.FC<QuickPatientFormProps> = ({
   useEffect(() => {
     const loadData = async () => {
         const [procs, docs] = await Promise.all([
-            dataService.getProcedureOptions(organizationId),
-            dataService.getDoctors(organizationId)
+            settingsService.getProcedureOptions(organizationId),
+            doctorService.getDoctors(organizationId)
         ]);
         setProcedures(procs);
         setDoctors(docs);
@@ -101,28 +105,12 @@ export const QuickPatientForm: React.FC<QuickPatientFormProps> = ({
     setError('');
     setValidationErrors([]);
 
-    // 1. Validate Patient Data
-    const validation = validateSafe(PatientSchema, {
-      name: formData.name,
-      phone: formData.phone,
-      organizationId,
-      cpf: formData.cpf || undefined, 
-      birthDate: formData.birthDate || undefined,
-      notes: formData.notes || undefined,
-    });
-
-    if (!validation.success) {
-      setValidationErrors(validation.errors || ['Erro de validação']);
-      return;
-    }
-
+    // 1. Basic Validation
     if (formData.cpf && !validateCPF(formData.cpf)) {
       setError('CPF inválido.');
       return;
     }
 
-    // 2. Validate Appointment Data
-    // If user filled ANY appointment field OR we are in the context of "New Appointment" (initialDate/Time present), enforce all
     const isBookingContext = !!initialDate || !!initialTime;
     const hasApptData = formData.apptDate || formData.apptTime || isBookingContext;
     
@@ -138,41 +126,80 @@ export const QuickPatientForm: React.FC<QuickPatientFormProps> = ({
     }
 
     setLoading(true);
-    try {
-      // 3. Create Patient
-      const validData = validation.data as any;
-      
-      const newPatient = await dataService.createPatient({
-        organizationId,
-        name: validData.name,
-        phone: validData.phone,
-        cpf: validData.cpf || undefined,
-        birthDate: validData.birthDate || undefined,
-        notes: validData.notes || undefined,
-        status: PatientStatus.Active
-      });
 
-      // 4. Create Appointment (If data present)
-      if (formData.apptDate && formData.apptTime && formData.doctorId) {
-        await dataService.createAppointment({
-            clinicId: organizationId,
-            doctorId: formData.doctorId,
-            patientId: newPatient.id,
-            date: formData.apptDate,
-            time: formData.apptTime,
-            status: AppointmentStatus.AGENDADO,
-            procedure: formData.apptProcedure || 'Consulta',
-            notes: formData.notes || '', 
-            createdAt: new Date().toISOString()
-        });
-        showToast('success', 'Paciente cadastrado e agendado!');
+    // Sanitize notes once
+    const safeNotes = sanitizeInput(formData.notes);
+
+    try {
+      const currentUser = authService.getCurrentUser();
+      if (!currentUser) throw new Error("Usuário não autenticado");
+
+      // Determine flow: Pure Patient Create VS Patient + Appointment Transaction
+      if (hasApptData) {
+          // --- TRANSACTIONAL FLOW (ATOMIC) ---
+          const { patient } = await appointmentService.processBookingTransaction({
+              clinicId: organizationId,
+              doctorId: formData.doctorId,
+              date: formData.apptDate,
+              time: formData.apptTime,
+              procedure: formData.apptProcedure || 'Consulta',
+              notes: safeNotes,
+              newPatientData: {
+                  name: formData.name,
+                  phone: formData.phone,
+                  cpf: formData.cpf || undefined,
+                  birthDate: formData.birthDate || undefined,
+                  notes: safeNotes
+              },
+              currentUser: currentUser
+          });
+
+          showToast('success', 'Paciente cadastrado e agendado!');
+          onSuccess(patient);
+
       } else {
+          // --- STANDARD PATIENT CREATION FLOW ---
+          // Validate using Zod schema via helper
+          const validation = validateSafe(PatientSchema, {
+            name: formData.name,
+            phone: formData.phone,
+            organizationId,
+            cpf: formData.cpf || undefined, 
+            birthDate: formData.birthDate || undefined,
+            notes: safeNotes,
+          });
+
+          if (!validation.success) {
+            setValidationErrors(validation.errors || ['Erro de validação']);
+            setLoading(false);
+            return;
+          }
+
+          const validData = validation.data as any;
+          const newPatient = await patientService.createPatient({
+            organizationId,
+            name: validData.name,
+            phone: validData.phone,
+            cpf: validData.cpf || undefined,
+            birthDate: validData.birthDate || undefined,
+            notes: validData.notes || undefined,
+            status: PatientStatus.Active
+          }, undefined, currentUser);
+
           showToast('success', 'Paciente cadastrado com sucesso!');
+          onSuccess(newPatient);
       }
       
-      onSuccess(newPatient);
     } catch (err: any) {
-      setError(err.message || 'Erro ao processar cadastro.');
+      let msg = err.message || "Erro desconhecido.";
+      if (msg.startsWith('CONFLICT_DETECTED:')) {
+          msg = msg.replace('CONFLICT_DETECTED:', '');
+          showToast('warning', msg); // Warning is better for conflicts
+          if (onConflict) onConflict();
+      } else {
+          showToast('error', msg);
+      }
+      setError(msg);
     } finally {
       setLoading(false);
     }
@@ -200,15 +227,17 @@ export const QuickPatientForm: React.FC<QuickPatientFormProps> = ({
         
         {/* Error Feedback */}
         {(error || validationErrors.length > 0) && (
-            <div className="mb-6 p-4 bg-red-50 text-red-700 text-sm rounded-xl border border-red-100">
+            <div className="mb-6 p-4 bg-red-50 text-red-700 text-sm rounded-xl border border-red-100 animate-in slide-in-from-top-2">
                 <div className="flex items-center gap-2 font-bold mb-2">
                     <AlertCircle size={16} />
-                    <span>Verifique os erros:</span>
+                    <span>Atenção:</span>
                 </div>
-                {error && <p className="mb-1">{error}</p>}
-                <ul className="list-disc list-inside">
-                  {validationErrors.map((err, i) => <li key={i}>{err}</li>)}
-                </ul>
+                {error && <p className="mb-1 font-medium">{error}</p>}
+                {validationErrors.length > 0 && (
+                    <ul className="list-disc list-inside opacity-80">
+                      {validationErrors.map((err, i) => <li key={i}>{err}</li>)}
+                    </ul>
+                )}
             </div>
         )}
 
@@ -338,6 +367,7 @@ export const QuickPatientForm: React.FC<QuickPatientFormProps> = ({
         <button 
             onClick={onCancel}
             className="px-6 py-2.5 border border-slate-300 text-slate-600 font-bold rounded-xl hover:bg-white transition-colors"
+            disabled={loading}
         >
             Cancelar
         </button>
@@ -346,7 +376,12 @@ export const QuickPatientForm: React.FC<QuickPatientFormProps> = ({
             disabled={loading}
             className="px-8 py-2.5 bg-blue-600 text-white font-bold rounded-xl hover:bg-blue-700 shadow-lg shadow-blue-500/30 transition-all flex items-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed"
         >
-            {loading ? 'Salvando...' : 'Salvar & Agendar'}
+            {loading ? (
+                <>
+                    <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    <span>Processando...</span>
+                </>
+            ) : 'Salvar & Agendar'}
         </button>
       </div>
     </div>

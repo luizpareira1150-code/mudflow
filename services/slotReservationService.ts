@@ -1,9 +1,12 @@
+
 import { SlotReservation } from '../types';
 
 const RESERVATIONS_KEY = 'medflow_slot_reservations';
 const RESERVATION_TIMEOUT_MS = 5 * 60 * 1000;
 
 class SlotReservationService {
+  private cleanupIntervalId: any = null;
+
   private getReservations(): SlotReservation[] {
     const stored = localStorage.getItem(RESERVATIONS_KEY);
     if (!stored) return [];
@@ -29,7 +32,9 @@ class SlotReservationService {
     userId?: string;
   }): Promise<{ success: boolean; reservation?: SlotReservation; conflict?: SlotReservation }> {
     const reservations = this.getReservations();
-    const sessionId = Math.random().toString(36).substr(2, 9);
+    
+    // GOVERNANCE: Use crypto.randomUUID() for Session ID instead of Math.random()
+    const sessionId = crypto.randomUUID();
     
     // SOLUTION B LOGIC: Strict check. If it exists, it's a conflict.
     // No check for "if (existing.userId === params.userId)"
@@ -49,7 +54,8 @@ class SlotReservationService {
     const expiresAt = new Date(now.getTime() + RESERVATION_TIMEOUT_MS);
     
     const newReservation: SlotReservation = {
-      id: `res_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
+      // GOVERNANCE: Use crypto.randomUUID()
+      id: crypto.randomUUID(),
       slotId: `${params.doctorId}_${params.date}_${params.time}`,
       doctorId: params.doctorId,
       date: params.date,
@@ -98,7 +104,25 @@ class SlotReservationService {
     if (removed > 0) console.log(`[CLEANUP] ${removed} reservas expiradas removidas`);
     return removed;
   }
+
+  /**
+   * Starts the cleanup interval correctly tied to the app lifecycle
+   */
+  startCleanup() {
+      if (this.cleanupIntervalId) return;
+      console.log('[RESERVATION] Starting Cleanup Service');
+      this.cleanupIntervalId = setInterval(() => this.cleanupExpiredReservations(), 60 * 1000);
+  }
+
+  /**
+   * Stops the cleanup interval
+   */
+  stopCleanup() {
+      if (this.cleanupIntervalId) {
+          clearInterval(this.cleanupIntervalId);
+          this.cleanupIntervalId = null;
+      }
+  }
 }
 
 export const slotReservationService = new SlotReservationService();
-setInterval(() => slotReservationService.cleanupExpiredReservations(), 60 * 1000);

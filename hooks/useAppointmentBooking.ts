@@ -1,12 +1,9 @@
-
-
 import { useState, useEffect, useCallback } from 'react';
-import { Doctor, AvailableSlot, AppointmentStatus, Patient, RecommendedSlot } from '../types';
-import { dataService } from '../services/mockSupabase';
-import { slotReservationService } from '../services/slotReservationService';
+import { Doctor, AvailableSlot, Patient, RecommendedSlot, User } from '../types';
+import { doctorService } from '../services/doctorService';
+import { appointmentService } from '../services/appointmentService';
+import { settingsService } from '../services/settingsService';
 import { recommendationService } from '../services/recommendationService';
-import { validateSafe } from '../utils/validator';
-import { AppointmentSchema } from '../utils/validationSchemas';
 import { useToast } from '../components/ToastProvider';
 
 interface UseBookingProps {
@@ -37,7 +34,7 @@ export const useAppointmentBooking = ({ clinicId, selectedDoctorId, selectedDate
     let mounted = true;
     const loadDoctors = async () => {
       try {
-        const docs = await dataService.getDoctors(clinicId);
+        const docs = await doctorService.getDoctors(clinicId);
         if (mounted) setDoctors(docs);
       } catch (err) {
         console.error("Failed to load doctors", err);
@@ -61,8 +58,8 @@ export const useAppointmentBooking = ({ clinicId, selectedDoctorId, selectedDate
     const loadContext = async () => {
       try {
         const [fetchedSlots, fetchedProcs] = await Promise.all([
-          dataService.getAvailableSlots(clinicId, selectedDoctorId, selectedDate),
-          dataService.getProcedureOptions(clinicId, selectedDoctorId)
+          appointmentService.getAvailableSlots(clinicId, selectedDoctorId, selectedDate),
+          settingsService.getProcedureOptions(clinicId, selectedDoctorId)
         ]);
         
         if (mounted) {
@@ -99,13 +96,13 @@ export const useAppointmentBooking = ({ clinicId, selectedDoctorId, selectedDate
 
   const clearSuggestions = useCallback(() => setSuggestions([]), []);
 
-  // 4. Action: Commit Booking (The heavy lifting)
+  // 4. Action: Commit Booking (Atomic Transaction)
   const bookAppointment = useCallback(async (params: {
     patient: Patient | null;
     time: string;
     procedure: string;
     notes: string;
-    currentUser: any; // User type
+    currentUser: User; // Updated type from any to User
   }) => {
     const { patient, time, procedure, notes, currentUser } = params;
     setError('');
@@ -121,48 +118,19 @@ export const useAppointmentBooking = ({ clinicId, selectedDoctorId, selectedDate
     }
 
     setIsSubmitting(true);
-    let reservationId: string | undefined;
 
     try {
-      // Step A: Reserve Slot (Concurrency Check)
-      const reservationResult = await slotReservationService.reserveSlot({
-        doctorId: selectedDoctorId,
-        date: selectedDate,
-        time: time,
-        clinicId,
-        reservedBy: 'WEB_APP',
-        userId: currentUser.id
+      // Execute Atomic Transaction
+      await appointmentService.processBookingTransaction({
+          clinicId,
+          doctorId: selectedDoctorId,
+          date: selectedDate,
+          time,
+          procedure,
+          notes,
+          patientId: patient.id, // Existing patient ID
+          currentUser: currentUser // Pass full user object
       });
-
-      if (!reservationResult.success) {
-        const conflictOwner = reservationResult.conflict?.reservedBy === 'N8N_WEBHOOK' 
-          ? 'automação do WhatsApp' 
-          : 'outra secretária';
-        throw new Error(`Este horário acabou de ser reservado por ${conflictOwner}. Escolha outro.`);
-      }
-      reservationId = reservationResult.reservation!.id;
-
-      // Step B: Prepare Payload
-      const appointmentPayload = {
-        clinicId,
-        doctorId: selectedDoctorId,
-        patientId: patient.id,
-        date: selectedDate,
-        time,
-        status: AppointmentStatus.AGENDADO,
-        procedure: procedure || 'Consulta',
-        notes,
-        createdAt: new Date().toISOString()
-      };
-
-      // Step C: Schema Validation
-      const validation = validateSafe(AppointmentSchema, appointmentPayload);
-      if (!validation.success) {
-        throw new Error(validation.errors?.join(', ') || 'Erro nos dados do agendamento.');
-      }
-
-      // Step D: Persist to DB
-      await dataService.createAppointment(appointmentPayload, undefined, reservationId);
       
       showToast('success', 'Agendamento realizado com sucesso!');
       return true;
@@ -179,11 +147,6 @@ export const useAppointmentBooking = ({ clinicId, selectedDoctorId, selectedDate
       }
       
       setError(msg);
-
-      // Rollback Reservation if exists
-      if (reservationId) {
-        await slotReservationService.cancelReservation(reservationId);
-      }
       return false;
     } finally {
       setIsSubmitting(false);

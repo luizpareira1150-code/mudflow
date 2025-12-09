@@ -1,7 +1,9 @@
 
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { socketServer, SocketEvent } from '../lib/socketServer';
-import { dataService } from '../services/mockSupabase';
+import { appointmentService } from '../services/appointmentService';
+import { patientService } from '../services/patientService';
+import { doctorService } from '../services/doctorService';
 
 /**
  * Hook genérico para dados em tempo real
@@ -21,20 +23,48 @@ export function useRealtimeData<T>(
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
   
+  // Track mounted state to prevent setting state on unmounted component
+  const isMounted = useRef(true);
+
+  // Use ref to hold the latest fetch function, preventing re-execution of loadData
+  // if the parent passes a new inline function on every render.
+  const fetchRef = useRef(fetchFunction);
+
+  useEffect(() => {
+    fetchRef.current = fetchFunction;
+  }, [fetchFunction]);
+
+  // Handle unmount cleanup
+  useEffect(() => {
+    isMounted.current = true;
+    return () => {
+      isMounted.current = false;
+    };
+  }, []);
+
   // Função de carregamento
   const loadData = useCallback(async (isSilent = false) => {
     try {
-      if (!isSilent) setLoading(true);
-      setError(null);
-      const result = await fetchFunction();
-      setData(result);
+      if (!isSilent && isMounted.current) setLoading(true);
+      if (isMounted.current) setError(null);
+      
+      // Always call the latest version of the function
+      const result = await fetchRef.current();
+      
+      if (isMounted.current) {
+        setData(result);
+      }
     } catch (err) {
-      setError(err instanceof Error ? err : new Error('Erro desconhecido'));
       console.error('Erro ao carregar dados:', err);
+      if (isMounted.current) {
+        setError(err instanceof Error ? err : new Error('Erro desconhecido'));
+      }
     } finally {
-      if (!isSilent) setLoading(false);
+      if (!isSilent && isMounted.current) {
+        setLoading(false);
+      }
     }
-  }, dependencies); // dependencies controlled by parent
+  }, dependencies); // Only re-create if explicit dependencies change
   
   // Carregar dados inicial
   useEffect(() => {
@@ -48,9 +78,6 @@ export function useRealtimeData<T>(
     // Registrar listeners
     const unsubscribers = events.map(event => 
       socketServer.on(event, () => {
-        // console.log('🔄 [Realtime] Recarregando por evento:', event);
-        // Silent reload on event updates to avoid flickering spinners if desired, 
-        // or regular load. For now, using regular load logic inside but we can optimize.
         loadData(true); // Silent refresh
       })
     );
@@ -79,13 +106,13 @@ export function useRealtimeAppointments(
   doctorId?: string
 ) {
   return useRealtimeData(
-    () => dataService.getAppointments(clinicId, date, doctorId),
+    () => appointmentService.getAppointments(clinicId, date, doctorId),
     [
       SocketEvent.APPOINTMENT_CREATED,
       SocketEvent.APPOINTMENT_UPDATED,
       SocketEvent.APPOINTMENT_DELETED,
       SocketEvent.APPOINTMENT_STATUS_CHANGED,
-      SocketEvent.AGENDA_CONFIG_UPDATED // Config changes might affect slot rendering if using this for slots
+      SocketEvent.AGENDA_CONFIG_UPDATED
     ],
     [clinicId, date, doctorId]
   );
@@ -96,7 +123,7 @@ export function useRealtimeAppointments(
  */
 export function useRealtimePatients(organizationId: string) {
   return useRealtimeData(
-    () => dataService.getAllPatients(organizationId),
+    () => patientService.getAllPatients(organizationId),
     [SocketEvent.PATIENT_CREATED, SocketEvent.PATIENT_UPDATED],
     [organizationId]
   );
@@ -107,7 +134,7 @@ export function useRealtimePatients(organizationId: string) {
  */
 export function useRealtimeDoctors(organizationId: string) {
   return useRealtimeData(
-    () => dataService.getDoctors(organizationId),
+    () => doctorService.getDoctors(organizationId),
     [SocketEvent.DOCTOR_CREATED, SocketEvent.DOCTOR_DELETED],
     [organizationId]
   );
@@ -118,7 +145,7 @@ export function useRealtimeDoctors(organizationId: string) {
  */
 export function useRealtimeUsers(clinicId?: string) {
   return useRealtimeData(
-    () => dataService.getUsers(clinicId),
+    () => doctorService.getUsers(clinicId),
     [SocketEvent.USER_CREATED, SocketEvent.USER_DELETED],
     [clinicId]
   );

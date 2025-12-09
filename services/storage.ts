@@ -1,5 +1,5 @@
 
-import { Organization, User, Doctor, Appointment, Patient, AuditLog, AgendaConfig, ClinicSettings, AccountType, UserRole, AppointmentStatus, AuditSource, AuditAction, PatientStatus, DoctorAvailability, DayOfWeek } from '../types';
+import { Organization, User, Doctor, Appointment, Patient, AuditLog, AgendaConfig, ClinicSettings, AccountType, UserRole, AppointmentStatus, AuditSource, AuditAction, PatientStatus, DoctorAvailability, DayOfWeek, DoctorAccessControl } from '../types';
 
 // ==========================================
 // CONSTANTS & KEYS
@@ -36,18 +36,20 @@ export interface StoredUser extends User {
   passwordHash: string;
 }
 
+// NOTE: "$SEED$123" is a placeholder token that corresponds to password "123".
+// It will be automatically migrated to a secure WebCrypto hash on first login.
 export const initialUsers: StoredUser[] = [
-  { id: 'user_owner', name: 'Super Admin', username: 'admin', passwordHash: 'PLAIN:123', email: 'admin@medflow.com', role: UserRole.OWNER, clinicId: 'global' },
-  { id: 'user_med_cli', name: 'Dr. Diretor', username: 'medicocli', passwordHash: 'PLAIN:123', email: 'diretor@clinica.com', role: UserRole.DOCTOR_ADMIN, clinicId: ORG_CLINICA_ID },
-  { id: 'user_sec', name: 'Secretária Ana', username: 'secretaria', passwordHash: 'PLAIN:123', email: 'ana@clinica.com', role: UserRole.SECRETARY, clinicId: ORG_CLINICA_ID },
-  { id: 'user_med_con', name: 'Dr. Roberto Solo', username: 'medicocon', passwordHash: 'PLAIN:123', email: 'roberto@consultorio.com', role: UserRole.DOCTOR_ADMIN, clinicId: ORG_CONSULTORIO_ID },
+  { id: 'user_owner', name: 'Super Admin', username: 'admin', passwordHash: '$SEED$123', email: 'admin@medflow.com', role: UserRole.OWNER, clinicId: 'global' },
+  { id: 'user_med_cli', name: 'Dr. Diretor', username: 'medicocli', passwordHash: '$SEED$123', email: 'diretor@clinica.com', role: UserRole.DOCTOR_ADMIN, clinicId: ORG_CLINICA_ID },
+  { id: 'user_sec', name: 'Secretária Ana', username: 'secretaria', passwordHash: '$SEED$123', email: 'ana@clinica.com', role: UserRole.SECRETARY, clinicId: ORG_CLINICA_ID },
+  { id: 'user_med_con', name: 'Dr. Roberto Solo', username: 'medicocon', passwordHash: '$SEED$123', email: 'roberto@consultorio.com', role: UserRole.DOCTOR_ADMIN, clinicId: ORG_CONSULTORIO_ID },
 ];
 
 export const initialDoctors: Doctor[] = [
-  { id: 'doc_cli_1', organizationId: ORG_CLINICA_ID, name: 'Dr. Diretor (Cardio)', specialty: 'Cardiologia', crm: '12345-SP', color: 'blue' },
-  { id: 'doc_cli_2', organizationId: ORG_CLINICA_ID, name: 'Dra. Julia (Derma)', specialty: 'Dermatologia', crm: '54321-SP', color: 'purple' },
-  { id: 'doc_cli_3', organizationId: ORG_CLINICA_ID, name: 'Dr. Pedro (Geral)', specialty: 'Clínico Geral', crm: '98765-SP', color: 'green' },
-  { id: 'doc_solo_1', organizationId: ORG_CONSULTORIO_ID, name: 'Dr. Roberto Solo', specialty: 'Pediatria', crm: '11122-MG', color: 'teal' }
+  { id: 'doc_cli_1', organizationId: ORG_CLINICA_ID, name: 'Dr. Diretor (Cardio)', specialty: 'Cardiologia', crm: '12345-SP', color: 'blue', accessControl: DoctorAccessControl.ALL, authorizedSecretaries: [] },
+  { id: 'doc_cli_2', organizationId: ORG_CLINICA_ID, name: 'Dra. Julia (Derma)', specialty: 'Dermatologia', crm: '54321-SP', color: 'purple', accessControl: DoctorAccessControl.ALL, authorizedSecretaries: [] },
+  { id: 'doc_cli_3', organizationId: ORG_CLINICA_ID, name: 'Dr. Pedro (Geral)', specialty: 'Clínico Geral', crm: '98765-SP', color: 'green', accessControl: DoctorAccessControl.ALL, authorizedSecretaries: [] },
+  { id: 'doc_solo_1', organizationId: ORG_CONSULTORIO_ID, name: 'Dr. Roberto Solo', specialty: 'Pediatria', crm: '11122-MG', color: 'teal', accessControl: DoctorAccessControl.ALL, authorizedSecretaries: [] }
 ];
 
 export const initialAgendaConfigs: AgendaConfig[] = [
@@ -83,7 +85,6 @@ export const initialAvailability: DoctorAvailability[] = [
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString()
   },
-  // ... other availabilities
 ];
 
 export const initialSettings: ClinicSettings[] = [
@@ -106,7 +107,6 @@ export const initialSettings: ClinicSettings[] = [
   }
 ];
 
-// Clean Initial Data
 export const initialPatients: Patient[] = [
     {
         id: 'p_ex_1',
@@ -123,20 +123,49 @@ export const initialAppointments: Appointment[] = [];
 export const initialLogs: AuditLog[] = [];
 
 // ==========================================
-// STORAGE HELPERS
+// STORAGE HELPERS (Safe)
 // ==========================================
 
 export const getStorage = <T>(key: string, initial: T): T => {
-  const stored = localStorage.getItem(key);
-  
-  if (!stored) {
-    localStorage.setItem(key, JSON.stringify(initial));
+  try {
+    const stored = localStorage.getItem(key);
+    if (!stored) {
+      // Don't auto-set on read to avoid quota issues on startup
+      return initial;
+    }
+    return JSON.parse(stored);
+  } catch (e) {
+    console.error("Storage Read Error", e);
     return initial;
   }
-
-  return JSON.parse(stored);
 };
 
 export const setStorage = <T>(key: string, data: T) => {
-  localStorage.setItem(key, JSON.stringify(data));
+  try {
+    localStorage.setItem(key, JSON.stringify(data));
+  } catch (e: any) {
+    // 🔥 SAFEGUARD: QUOTA EXCEEDED HANDLING
+    // If we hit the 5MB limit, we perform an emergency cleanup of non-critical data (Logs)
+    if (e.name === 'QuotaExceededError' || e.name === 'NS_ERROR_DOM_QUOTA_REACHED') {
+       console.warn("⚠️ STORAGE QUOTA EXCEEDED! Performing emergency cleanup...");
+       
+       // 1. Clear Logs (Most storage heavy, expendable)
+       try {
+           localStorage.setItem(STORAGE_KEYS.LOGS, '[]');
+       } catch (clearErr) {
+           console.error("Failed to clear logs", clearErr);
+       }
+
+       // 2. Retry original save
+       try {
+           localStorage.setItem(key, JSON.stringify(data));
+           console.log("Recovered from Quota Exceeded by clearing logs.");
+       } catch (retryErr) {
+           console.error("CRITICAL: Storage still full after cleanup. Data lost.", retryErr);
+           alert("ERRO CRÍTICO: Armazenamento cheio. Por favor, limpe os dados do navegador.");
+       }
+    } else {
+        console.error("Unknown Storage Error", e);
+    }
+  }
 };

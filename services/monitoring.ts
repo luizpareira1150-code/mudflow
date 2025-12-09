@@ -1,5 +1,6 @@
 
-import { User } from '../types';
+import { User, AuditAction, AuditSource } from '../types';
+import { systemLogService } from './auditService';
 
 /**
  * MONITORING FACADE SERVICE
@@ -40,7 +41,31 @@ class MonitoringService {
     console.table(context);
     console.groupEnd();
 
-    // 2. Enviar para Sentry/External (Simulado)
+    // 2. Fallback de Persistência (Audit Log)
+    // Garante que o erro seja salvo no histórico do sistema (Activity Logs) 
+    // mesmo se o serviço externo (Sentry) não estiver configurado ou falhar.
+    try {
+        systemLogService.createLog({
+            organizationId: context?.clinicId || 'system',
+            action: AuditAction.SYSTEM_ERROR,
+            source: AuditSource.SYSTEM,
+            entityType: 'RuntimeError',
+            entityId: error.name || 'unknown',
+            entityName: context?.source || 'Application',
+            description: error.message || 'Erro desconhecido capturado',
+            metadata: {
+                stack: error.stack,
+                context: context
+            },
+            userId: context?.userId || 'system',
+            userName: 'System Monitor'
+        }).catch(e => console.warn("Failed to persist error log", e));
+    } catch (e) {
+        // Prevent infinite loops if logging fails
+        console.warn("Critical failure in monitoring service", e);
+    }
+
+    // 3. Enviar para Sentry/External (Simulado)
     if (this.isProduction) {
       // Sentry.captureException(error, { extra: context });
     }

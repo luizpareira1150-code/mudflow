@@ -1,11 +1,14 @@
+
 import React, { useEffect, useState } from 'react';
 import { Appointment, AppointmentStatus, User, Column, Doctor } from '../types';
-import { dataService } from '../services/mockSupabase';
+import { appointmentService, settingsService } from '../services/mockSupabase';
 import { Phone, User as UserIcon, Edit2, X, Save, Trash2, Calendar as CalendarIcon, Stethoscope, ChevronDown, AlertTriangle, MessageSquare } from 'lucide-react';
 import { DatePicker } from './DatePicker';
 import { useToast } from './ToastProvider';
 import { useRealtimeAppointments } from '../hooks/useRealtimeData';
 import { RealtimeIndicator } from './RealtimeIndicator';
+import { useDoctorsByAccess } from '../hooks/useDoctorsByAccess';
+import { sanitizeInput } from '../utils/sanitizer';
 
 interface CRMProps {
   user: User;
@@ -23,8 +26,27 @@ const COLUMNS: Column[] = [
   { id: AppointmentStatus.NAO_VEIO, title: 'Não Veio', color: 'bg-red-100 border-red-300' },
 ];
 
-export const CRM: React.FC<CRMProps> = ({ user, doctors, selectedDoctorId, onDoctorChange, isConsultorio }) => {
+export const CRM: React.FC<CRMProps> = ({ user, doctors: propDoctors, selectedDoctorId: propSelectedDoctorId, onDoctorChange: propOnDoctorChange, isConsultorio }) => {
   const { showToast } = useToast();
+  
+  // Use hook for access control if prop not provided (or even if it is, for consistency)
+  const { doctors: accessDoctors } = useDoctorsByAccess(user, user.clinicId);
+  const doctors = propDoctors !== undefined ? propDoctors : accessDoctors; 
+  
+  // Ensure we use the filtered list for rendering options
+  const filteredDoctors = accessDoctors; 
+  
+  const [internalSelectedDoctorId, setInternalSelectedDoctorId] = useState<string>('');
+  const selectedDoctorId = propSelectedDoctorId || internalSelectedDoctorId;
+  const onDoctorChange = propOnDoctorChange || setInternalSelectedDoctorId;
+
+  // Auto-select
+  useEffect(() => {
+      if (filteredDoctors.length > 0 && (!selectedDoctorId || !filteredDoctors.find(d => d.id === selectedDoctorId))) {
+          onDoctorChange(filteredDoctors[0].id);
+      }
+  }, [filteredDoctors, selectedDoctorId, onDoctorChange]);
+
   const [selectedDate, setSelectedDate] = useState<string>(new Date().toISOString().split('T')[0]);
   
   // ✅ REALTIME HOOK: Substitui polling manual
@@ -55,7 +77,7 @@ export const CRM: React.FC<CRMProps> = ({ user, doctors, selectedDoctorId, onDoc
   // 1. Fetch Procedure Options (dynamic per doctor)
   useEffect(() => {
     if (selectedDoctorId) {
-        dataService.getProcedureOptions(user.clinicId, selectedDoctorId).then(setProcedureOptions);
+        settingsService.getProcedureOptions(user.clinicId, selectedDoctorId).then(setProcedureOptions);
     }
   }, [user.clinicId, selectedDoctorId]);
 
@@ -86,7 +108,7 @@ export const CRM: React.FC<CRMProps> = ({ user, doctors, selectedDoctorId, onDoc
 
         // 3. Chamada ao Servidor (Background)
         // O serviço emite evento WebSocket que atualizará outras abas
-        await dataService.updateAppointmentStatus(draggedApptId, targetStatus);
+        await appointmentService.updateAppointmentStatus(draggedApptId, targetStatus, undefined, user);
         
         showToast('success', `Movido para ${targetStatus.replace(/_/g, ' ')}`);
 
@@ -117,13 +139,13 @@ export const CRM: React.FC<CRMProps> = ({ user, doctors, selectedDoctorId, onDoc
   const handleUpdateAppointment = async () => {
     if (!selectedAppointment) return;
     try {
-      await dataService.updateAppointment({
+      await appointmentService.updateAppointment({
         ...selectedAppointment,
         date: editDate,
         time: editTime,
         procedure: editProcedure,
-        notes: editNotes
-      });
+        notes: sanitizeInput(editNotes)
+      }, user);
       // WebSocket atualizará a UI automaticamente
       setIsDetailsModalOpen(false);
       showToast('success', 'Alterações salvas!');
@@ -141,8 +163,10 @@ export const CRM: React.FC<CRMProps> = ({ user, doctors, selectedDoctorId, onDoc
           return;
       }
 
+      const safeReason = sanitizeInput(cancellationReason);
+
       try {
-          await dataService.deleteAppointment(selectedAppointment.id, cancellationReason);
+          await appointmentService.deleteAppointment(selectedAppointment.id, safeReason, user);
           // WebSocket atualizará a UI automaticamente
           setIsCancelModalOpen(false);
           setIsDetailsModalOpen(false);
@@ -164,7 +188,7 @@ export const CRM: React.FC<CRMProps> = ({ user, doctors, selectedDoctorId, onDoc
       return options;
   };
 
-  const currentDoctorName = doctors.find(d => d.id === selectedDoctorId)?.name;
+  const currentDoctorName = filteredDoctors.find(d => d.id === selectedDoctorId)?.name;
   
   // Safe default
   const appointmentList = appointments || [];
@@ -190,7 +214,7 @@ export const CRM: React.FC<CRMProps> = ({ user, doctors, selectedDoctorId, onDoc
                         onChange={(e) => onDoctorChange(e.target.value)}
                         className="pl-9 pr-8 py-2 bg-white border border-gray-200 rounded-lg text-sm font-semibold text-gray-700 outline-none focus:ring-2 focus:ring-blue-500 appearance-none min-w-[200px]"
                     >
-                        {doctors.map(doc => (
+                        {filteredDoctors.map(doc => (
                             <option key={doc.id} value={doc.id}>{doc.name}</option>
                         ))}
                     </select>

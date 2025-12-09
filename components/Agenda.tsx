@@ -1,7 +1,8 @@
+
 import React, { useState, useEffect } from 'react';
-import { Appointment, AppointmentStatus, User, AgendaConfig, Doctor, AvailableSlot } from '../types';
-import { dataService, doctorAvailabilityService } from '../services/mockSupabase';
-import { Clock, Plus, AlertCircle, CheckCircle, Settings, X, Save, Lock, CalendarOff, Trash2, User as UserIcon, Phone, Calendar as CalendarIcon, Edit2, FileText, Stethoscope, Tag, ChevronDown, AlertTriangle } from 'lucide-react';
+import { Appointment, AppointmentStatus, User, AgendaConfig, Doctor, AvailableSlot, UserRole } from '../types';
+import { settingsService, appointmentService, doctorAvailabilityService, patientService } from '../services/mockSupabase';
+import { Clock, Plus, AlertCircle, CheckCircle, Settings, Lock, Tag, ChevronDown } from 'lucide-react';
 import { DatePicker } from './DatePicker';
 import { BookingModal } from './BookingModal';
 import { useToast } from './ToastProvider';
@@ -11,6 +12,9 @@ import { useRealtimeData } from '../hooks/useRealtimeData';
 import { SocketEvent } from '../lib/socketServer';
 import { RealtimeIndicator } from './RealtimeIndicator';
 import { BlockScheduleModal } from './BlockScheduleModal';
+import { useDoctorsByAccess } from '../hooks/useDoctorsByAccess';
+import { AppointmentDetailsModal } from './agenda/AppointmentDetailsModal';
+import { CancellationModal } from './agenda/CancellationModal';
 
 interface AgendaProps {
   user: User;
@@ -29,22 +33,34 @@ export const Agenda: React.FC<AgendaProps> = ({
 }) => {
   const { showToast } = useToast();
   const isControlled = propDoctors !== undefined;
-  const [internalDoctors, setInternalDoctors] = useState<Doctor[]>([]);
+  
+  // Use hook for internal logic if not controlled
+  const { doctors: accessDoctors } = useDoctorsByAccess(user, user.clinicId);
   const [internalSelectedDoctorId, setInternalSelectedDoctorId] = useState<string>('');
   
-  const doctors = isControlled ? propDoctors! : internalDoctors;
+  const doctors = isControlled ? propDoctors! : accessDoctors;
   const selectedDoctorId = isControlled ? propSelectedDoctorId || '' : internalSelectedDoctorId;
   const onDoctorChange = isControlled ? propOnDoctorChange! : setInternalSelectedDoctorId;
+
+  // Permissions Check: All users who can access this view (including Secretaries) 
+  // are allowed to help configure the agenda via their own password confirmation.
+  const canConfigureAgenda = true;
+
+  // Auto-select first doctor if none selected
+  useEffect(() => {
+      if (!isControlled && doctors.length > 0 && !internalSelectedDoctorId) {
+          setInternalSelectedDoctorId(doctors[0].id);
+      }
+  }, [doctors, isControlled, internalSelectedDoctorId]);
 
   // State
   const [selectedDate, setSelectedDate] = useState<string>(new Date().toISOString().split('T')[0]);
   
   // ✅ REALTIME HOOK: Substitui polling manual para Available Slots
-  // Ouve eventos de criação/edição/exclusão de agendamentos e alterações de config
   const { data: availableSlots, loading, refresh: refreshSlots, error } = useRealtimeData<AvailableSlot[]>(
     () => {
         if (!selectedDoctorId) return Promise.resolve([]);
-        return dataService.getAvailableSlots(user.clinicId, selectedDoctorId, selectedDate);
+        return appointmentService.getAvailableSlots(user.clinicId, selectedDoctorId, selectedDate);
     },
     [
         SocketEvent.APPOINTMENT_CREATED,
@@ -66,19 +82,10 @@ export const Agenda: React.FC<AgendaProps> = ({
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedSlot, setSelectedSlot] = useState<AvailableSlot | null>(null);
 
-  // Modal State - Details
+  // Modal State - Details & Cancellation
   const [isDetailsModalOpen, setIsDetailsModalOpen] = useState(false);
   const [selectedAppointment, setSelectedAppointment] = useState<Appointment | null>(null);
-  
-  // Modal State - Cancellation
   const [isCancelModalOpen, setIsCancelModalOpen] = useState(false);
-  const [cancellationReason, setCancellationReason] = useState('');
-  
-  // Edit States for Existing Appointment
-  const [editDate, setEditDate] = useState('');
-  const [editTime, setEditTime] = useState('');
-  const [editProcedure, setEditProcedure] = useState('');
-  const [editNotes, setEditNotes] = useState('');
 
   // Config Modal
   const [isConfigOpen, setIsConfigOpen] = useState(false);
@@ -86,23 +93,13 @@ export const Agenda: React.FC<AgendaProps> = ({
   // Block Schedule Modal
   const [isBlockModalOpen, setIsBlockModalOpen] = useState(false);
 
-  // Fetch doctors if uncontrolled
-  useEffect(() => {
-      if (!isControlled) {
-          dataService.getDoctors(user.clinicId).then(docs => {
-              setInternalDoctors(docs);
-              if (docs.length > 0) setInternalSelectedDoctorId(docs[0].id);
-          });
-      }
-  }, [user.clinicId, isControlled]);
-
   // Fetch Config & Procedures
   useEffect(() => {
     const init = async () => {
       if (!selectedDoctorId) return;
       const [conf, procs] = await Promise.all([
-        dataService.getAgendaConfig(user.clinicId, selectedDoctorId),
-        dataService.getProcedureOptions(user.clinicId, selectedDoctorId)
+        settingsService.getAgendaConfig(user.clinicId, selectedDoctorId),
+        settingsService.getProcedureOptions(user.clinicId, selectedDoctorId)
       ]);
       setConfig(conf);
       setProcedureOptions(procs);
@@ -115,7 +112,6 @@ export const Agenda: React.FC<AgendaProps> = ({
     const checkAvailability = async () => {
       if (!selectedDoctorId || !selectedDate) return;
 
-      // Pass true for computeSuggestions, but service handles internal safety
       const validation = await doctorAvailabilityService.validateAvailability(
         selectedDoctorId,
         user.clinicId,
@@ -148,14 +144,8 @@ export const Agenda: React.FC<AgendaProps> = ({
 
     if (slot.isBooked && slot.appointment) {
       setSelectedAppointment(slot.appointment);
-      setEditDate(slot.appointment.date);
-      setEditTime(slot.appointment.time);
-      setEditProcedure(slot.appointment.procedure || '');
-      setEditNotes(slot.appointment.notes || '');
-      // Reset cancel states
-      setIsCancelModalOpen(false);
-      setCancellationReason('');
       setIsDetailsModalOpen(true);
+      setIsCancelModalOpen(false);
     } else {
       setSelectedSlot(slot);
       setIsModalOpen(true);
@@ -164,23 +154,15 @@ export const Agenda: React.FC<AgendaProps> = ({
 
   const handleBookingSuccess = () => {
       setIsModalOpen(false);
-      // Não precisa chamar refreshSlots() - WebSocket e o hook cuidam disso
   };
 
-  const handleDeleteAppointment = async () => {
+  const handleDeleteAppointment = async (reason: string) => {
     if (!selectedAppointment) return;
     
-    // Mandatoriedade do motivo (exceto se for BLOQUEADO que é sistema)
-    if (selectedAppointment.status !== AppointmentStatus.BLOQUEADO && !cancellationReason.trim()) {
-        showToast('warning', 'O motivo do cancelamento é obrigatório.');
-        return;
-    }
-
     try {
-        await dataService.deleteAppointment(selectedAppointment.id, cancellationReason);
+        await appointmentService.deleteAppointment(selectedAppointment.id, reason, user);
         setIsCancelModalOpen(false);
         setIsDetailsModalOpen(false);
-        // WebSocket atualizará a UI
         if (selectedAppointment.status === AppointmentStatus.BLOQUEADO) {
             showToast('success', 'Horário liberado.');
         } else {
@@ -188,23 +170,27 @@ export const Agenda: React.FC<AgendaProps> = ({
         }
     } catch (error) {
         showToast('error', 'Erro ao excluir.');
-    } finally {
-        setCancellationReason('');
     }
   };
 
-  const handleUpdateAppointment = async () => {
+  const handleUpdateAppointment = async (data: { date: string; time: string; procedure: string; notes: string; cpf: string }) => {
     if (!selectedAppointment) return;
     try {
-      await dataService.updateAppointment({
+      // 1. Check if CPF changed and update Patient record first
+      if (selectedAppointment.patientId && data.cpf !== (selectedAppointment.patient?.cpf || '')) {
+          await patientService.updatePatient(selectedAppointment.patientId, { cpf: data.cpf }, user);
+      }
+
+      // 2. Update Appointment with Sanitized Notes (Note: AppointmentDetailsModal handles sanitization before passing data)
+      await appointmentService.updateAppointment({
         ...selectedAppointment,
-        date: editDate,
-        time: editTime,
-        procedure: editProcedure,
-        notes: editNotes
-      });
+        date: data.date,
+        time: data.time,
+        procedure: data.procedure,
+        notes: data.notes
+      }, user);
+      
       setIsDetailsModalOpen(false);
-      // WebSocket atualizará a UI
       showToast('success', 'Consulta remarcada com sucesso!');
     } catch (error: any) {
       showToast('error', error.message || 'Erro ao atualizar.');
@@ -216,16 +202,6 @@ export const Agenda: React.FC<AgendaProps> = ({
     const h = Math.floor(mins / 60);
     const m = mins % 60;
     return m === 0 ? `${h}h` : `${h}h ${m}m`;
-  };
-
-  const generateTimeOptions30Min = () => {
-    const options = [];
-    for (let i = 0; i < 24; i++) {
-      const h = String(i).padStart(2, '0');
-      options.push(`${h}:00`);
-      options.push(`${h}:30`);
-    }
-    return options;
   };
 
   const currentDoctor = doctors.find(d => d.id === selectedDoctorId);
@@ -261,9 +237,8 @@ export const Agenda: React.FC<AgendaProps> = ({
                         {currentDoctor?.name || 'Meu Consultório'}
                     </div>
                 )}
-                {/* Specialty Display */}
                 <span className="text-sm font-medium text-blue-600 mt-0.5">
-                    {currentDoctor?.specialty || 'Especialidade não definida'}
+                    {currentDoctor?.specialty || (doctors.length === 0 ? 'Nenhum médico disponível' : 'Especialidade não definida')}
                 </span>
              </div>
 
@@ -287,22 +262,28 @@ export const Agenda: React.FC<AgendaProps> = ({
           </div>
           
           <div className="flex items-center gap-2">
-            <button 
-                onClick={() => setIsBlockModalOpen(true)}
-                className="px-4 py-2 bg-white border border-gray-200 text-red-600 rounded-lg hover:border-red-300 hover:bg-red-50 font-medium text-sm h-[42px] flex items-center gap-2 shadow-sm transition-colors"
-                title="Fechar Horários"
-            >
-                <Lock size={18} />
-                <span className="hidden sm:inline">Bloquear</span>
-            </button>
+            {canConfigureAgenda && (
+                <>
+                    <button 
+                        onClick={() => setIsBlockModalOpen(true)}
+                        disabled={!currentDoctor}
+                        className="px-4 py-2 bg-white border border-gray-200 text-red-600 rounded-lg hover:border-red-300 hover:bg-red-50 font-medium text-sm h-[42px] flex items-center gap-2 shadow-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                        title="Fechar Horários"
+                    >
+                        <Lock size={18} />
+                        <span className="hidden sm:inline">Bloquear</span>
+                    </button>
 
-            <button 
-                onClick={() => setIsConfigOpen(true)}
-                className="px-4 py-2 bg-white border border-gray-200 text-gray-700 rounded-lg hover:border-blue-400 hover:text-blue-600 font-medium text-sm h-[42px] flex items-center gap-2 shadow-sm transition-colors"
-            >
-                <Settings size={18} />
-                <span className="hidden sm:inline">Configurar</span>
-            </button>
+                    <button 
+                        onClick={() => setIsConfigOpen(true)}
+                        disabled={!currentDoctor}
+                        className="px-4 py-2 bg-white border border-gray-200 text-gray-700 rounded-lg hover:border-blue-400 hover:text-blue-600 font-medium text-sm h-[42px] flex items-center gap-2 shadow-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                        <Settings size={18} />
+                        <span className="hidden sm:inline">Configurar</span>
+                    </button>
+                </>
+            )}
           </div>
         </div>
       </div>
@@ -359,10 +340,13 @@ export const Agenda: React.FC<AgendaProps> = ({
         {slotsToRender.length === 0 && !loading && !error ? (
            <div className="h-full flex flex-col items-center justify-center text-gray-400">
              <AlertCircle size={48} className="mb-4 text-gray-300" />
-             <p>Nenhum horário disponível para esta data.</p>
-             <p className="text-sm mt-1">Verifique as configurações de dias, horários ou bloqueios de agenda.</p>
-             {availabilityInfo ? null : (
-                 <button onClick={() => setIsConfigOpen(true)} className="mt-4 text-blue-600 hover:underline">Configurar Agenda</button>
+             <p>{doctors.length === 0 ? 'Você não tem acesso a nenhuma agenda.' : 'Nenhum horário disponível para esta data.'}</p>
+             {doctors.length > 0 && (
+                 <p className="text-sm mt-1">Verifique as configurações de dias, horários ou bloqueios de agenda.</p>
+             )}
+             {/* Only show config button if user has permission */}
+             {canConfigureAgenda && !availabilityInfo && (
+                 <button disabled={!currentDoctor} onClick={() => setIsConfigOpen(true)} className="mt-4 text-blue-600 hover:underline disabled:opacity-0">Configurar Agenda</button>
              )}
            </div>
         ) : (
@@ -397,7 +381,7 @@ export const Agenda: React.FC<AgendaProps> = ({
                     ${isAvailable 
                       ? 'border-gray-100 hover:border-blue-400 hover:bg-blue-50' 
                       : (slot.isReserved && !slot.isBooked) 
-                          ? 'border-amber-200 bg-amber-50 hover:border-amber-300' // Visual lock state
+                          ? 'border-amber-200 bg-amber-50 hover:border-amber-300' 
                           : 'border-blue-100 bg-blue-50 hover:border-blue-300 hover:shadow-md'
                     }
                   `}
@@ -409,7 +393,7 @@ export const Agenda: React.FC<AgendaProps> = ({
                     {isAvailable ? (
                       <Plus size={20} className="text-gray-300 group-hover:text-blue-500" />
                     ) : (slot.isReserved && !slot.isBooked) ? (
-                      <Clock size={20} className="text-amber-500 animate-pulse" /> // Lock icon/status
+                      <Clock size={20} className="text-amber-500 animate-pulse" />
                     ) : (
                       <CheckCircle size={20} className="text-blue-500" />
                     )}
@@ -417,7 +401,6 @@ export const Agenda: React.FC<AgendaProps> = ({
 
                   {appt ? (
                     <div>
-                      {/* UPDATED: Patient Name Access */}
                       <p className="font-semibold text-gray-800 truncate">{appt.patient?.name || 'Paciente'}</p>
                       <div className="flex flex-col gap-1 mt-1">
                         <p className="text-xs text-gray-500 flex items-center gap-1">
@@ -448,229 +431,49 @@ export const Agenda: React.FC<AgendaProps> = ({
         isOpen={isModalOpen}
         onClose={() => setIsModalOpen(false)}
         onSuccess={handleBookingSuccess}
+        onConflict={() => {
+            refreshSlots(); // Refresh grid immediately when conflict detected
+        }}
         user={user}
         preSelectedDate={selectedDate}
         preSelectedTime={selectedSlot?.time}
         preSelectedDoctorId={selectedDoctorId}
       />
 
-      {/* Block Schedule Modal */}
-      <BlockScheduleModal
-        isOpen={isBlockModalOpen}
-        onClose={() => setIsBlockModalOpen(false)}
-        onSuccess={() => { /* Realtime hook handles refresh */ }}
-        user={user}
-        doctors={doctors}
-        preSelectedDate={selectedDate}
-        preSelectedDoctorId={selectedDoctorId}
-      />
+      {/* Block Schedule Modal - Accessible to all authorized users */}
+      {canConfigureAgenda && (
+          <BlockScheduleModal
+            isOpen={isBlockModalOpen}
+            onClose={() => setIsBlockModalOpen(false)}
+            onSuccess={() => { /* Realtime hook handles refresh */ }}
+            user={user}
+            doctors={doctors}
+            preSelectedDate={selectedDate}
+            preSelectedDoctorId={selectedDoctorId}
+          />
+      )}
 
       {/* Details Modal */}
-      {isDetailsModalOpen && selectedAppointment && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
-            <div className="bg-white rounded-xl shadow-2xl p-6 w-full max-w-md max-h-[90vh] overflow-y-auto animate-in zoom-in-95">
-                <div className="flex justify-between items-center mb-6">
-                    <div className="flex items-center gap-3">
-                        <div className={`p-3 rounded-full ${selectedAppointment.status === AppointmentStatus.BLOQUEADO ? 'bg-gray-100' : 'bg-blue-100'}`}>
-                            {selectedAppointment.status === AppointmentStatus.BLOQUEADO ? (
-                                <Lock size={24} className="text-gray-600" />
-                            ) : (
-                                <Edit2 size={24} className="text-blue-600" />
-                            )}
-                        </div>
-                        <div>
-                            <h3 className="text-lg font-bold text-gray-800">
-                                {selectedAppointment.status === AppointmentStatus.BLOQUEADO ? 'Agenda Fechada' : 'Gerenciar Consulta'}
-                            </h3>
-                            <p className="text-sm text-gray-500">Detalhes & Remarcação</p>
-                        </div>
-                    </div>
-                    <button onClick={() => setIsDetailsModalOpen(false)}><X size={20} /></button>
-                </div>
+      <AppointmentDetailsModal 
+        isOpen={isDetailsModalOpen}
+        onClose={() => setIsDetailsModalOpen(false)}
+        appointment={selectedAppointment}
+        procedureOptions={procedureOptions}
+        onUpdate={handleUpdateAppointment}
+        onCancelRequest={() => setIsCancelModalOpen(true)}
+      />
 
-                <div className="space-y-6 mb-6">
-                    {/* Patient Name Section */}
-                    {selectedAppointment.status !== AppointmentStatus.BLOQUEADO && (
-                        <div className="flex items-start gap-4">
-                            <div className="bg-blue-50 p-2 rounded-lg text-blue-600 mt-1">
-                                <UserIcon size={20} />
-                            </div>
-                            <div>
-                                <h4 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Paciente</h4>
-                                <p className="text-lg font-semibold text-gray-900">{selectedAppointment.patient?.name || 'Paciente'}</p>
-                            </div>
-                        </div>
-                    )}
+      {/* Cancellation Modal */}
+      <CancellationModal 
+        isOpen={isCancelModalOpen}
+        onClose={() => setIsCancelModalOpen(false)}
+        onConfirm={handleDeleteAppointment}
+        loading={loading}
+        isBlockedStatus={selectedAppointment?.status === AppointmentStatus.BLOQUEADO}
+      />
 
-                    {selectedAppointment.patient?.phone && (
-                        <div className="flex items-start gap-4">
-                            <div className="bg-green-50 p-2 rounded-lg text-green-600 mt-1">
-                                <Phone size={20} />
-                            </div>
-                            <div>
-                                <h4 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Contato</h4>
-                                <p className="text-base text-gray-700 font-medium">{selectedAppointment.patient.phone}</p>
-                            </div>
-                        </div>
-                    )}
-                    
-                     {selectedAppointment.status !== AppointmentStatus.BLOQUEADO ? (
-                        <div className="border-t border-gray-100 pt-6">
-                            <p className="text-xs font-bold text-gray-400 uppercase mb-3 flex items-center gap-1">
-                                <CalendarIcon size={12} /> Editar Dados
-                            </p>
-                            
-                            <div className="grid grid-cols-2 gap-3 mb-4">
-                                <div>
-                                    <label className="block text-xs text-gray-500 mb-1">Data</label>
-                                    <DatePicker value={editDate} onChange={setEditDate} />
-                                </div>
-                                <div>
-                                    <label className="block text-xs text-gray-500 mb-1">Hora</label>
-                                    <div className="relative">
-                                      <select 
-                                          value={editTime}
-                                          onChange={(e) => setEditTime(e.target.value)}
-                                          className="w-full border border-gray-200 bg-white rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-blue-500 h-[42px] appearance-none"
-                                      >
-                                          {generateTimeOptions30Min().map((t) => (
-                                              <option key={t} value={t}>{t}</option>
-                                          ))}
-                                      </select>
-                                      <ChevronDown size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
-                                    </div>
-                                </div>
-                            </div>
-                            
-                            <div className="space-y-4">
-                                <div>
-                                    <label className="block text-xs text-gray-500 mb-1">Tipo de Consulta</label>
-                                    <div className="relative">
-                                        <Stethoscope size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
-                                        <select
-                                            value={editProcedure}
-                                            onChange={e => setEditProcedure(e.target.value)}
-                                            className="w-full bg-white text-gray-900 border border-gray-200 rounded-lg pl-9 pr-8 py-2 text-sm focus:ring-2 focus:ring-blue-100 outline-none appearance-none h-[42px]"
-                                        >
-                                            <option value="" disabled>Selecione...</option>
-                                            {procedureOptions.map(opt => (
-                                                <option key={opt} value={opt}>{opt}</option>
-                                            ))}
-                                        </select>
-                                        <ChevronDown size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
-                                    </div>
-                                </div>
-                                
-                                <div>
-                                    <label className="block text-xs text-gray-500 mb-1">Observações</label>
-                                    <textarea
-                                        value={editNotes}
-                                        onChange={e => setEditNotes(e.target.value)}
-                                        className="w-full bg-white text-gray-900 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-100 outline-none resize-none"
-                                        rows={2}
-                                        placeholder="Adicionar notas..."
-                                    />
-                                </div>
-                            </div>
-                        </div>
-                    ) : (
-                        <div className="space-y-4">
-                            {selectedAppointment.notes && (
-                                <div className="flex items-start gap-4">
-                                    <div className="bg-yellow-50 p-2 rounded-lg text-yellow-600 mt-1">
-                                        <FileText size={20} />
-                                    </div>
-                                    <div className="flex-1">
-                                        <h4 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Observações</h4>
-                                        <div className="bg-gray-50 p-3 rounded-lg border border-gray-100 text-sm text-gray-600 italic">
-                                            "{selectedAppointment.notes}"
-                                        </div>
-                                    </div>
-                                </div>
-                            )}
-                        </div>
-                    )}
-                </div>
-
-                <div className="flex gap-3">
-                    <button
-                        type="button"
-                        onClick={() => setIsCancelModalOpen(true)}
-                        className="flex-1 py-3 bg-white border border-red-200 text-red-600 hover:bg-red-50 rounded-xl font-medium transition-colors flex justify-center items-center gap-2 shadow-sm"
-                    >
-                        <Trash2 size={18} />
-                        {selectedAppointment.status === AppointmentStatus.BLOQUEADO ? 'Liberar Horário' : 'Cancelar'}
-                    </button>
-                    
-                    {selectedAppointment.status !== AppointmentStatus.BLOQUEADO && (
-                        <button
-                            type="button"
-                            onClick={handleUpdateAppointment}
-                            className="flex-1 py-3 bg-blue-600 text-white rounded-xl font-medium hover:bg-blue-700 transition-colors shadow-md flex justify-center items-center gap-2"
-                        >
-                            <Save size={18} />
-                            Salvar
-                        </button>
-                    )}
-                </div>
-            </div>
-        </div>
-      )}
-
-      {/* Cancellation Pop-up Modal */}
-      {isCancelModalOpen && selectedAppointment && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[60] p-4">
-            <div className="bg-white rounded-2xl shadow-xl max-w-sm w-full p-6 animate-in zoom-in-95 duration-200">
-                <div className="w-12 h-12 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                    <AlertTriangle size={24} className="text-red-600" />
-                </div>
-                <h3 className="text-lg font-bold text-gray-900 text-center mb-2">
-                    {selectedAppointment.status === AppointmentStatus.BLOQUEADO ? 'Confirmar Liberação' : 'Confirmar Cancelamento'}
-                </h3>
-                <p className="text-sm text-gray-500 text-center mb-4">
-                    {selectedAppointment.status === AppointmentStatus.BLOQUEADO 
-                        ? 'Tem certeza que deseja liberar este horário?' 
-                        : 'Esta ação removerá o agendamento da lista.'}
-                </p>
-
-                {selectedAppointment.status !== AppointmentStatus.BLOQUEADO && (
-                    <div className="mb-4">
-                        <label className="block text-xs font-bold text-gray-700 uppercase mb-2">
-                            Motivo do Cancelamento <span className="text-red-500">*</span>
-                        </label>
-                        <textarea
-                            value={cancellationReason}
-                            onChange={(e) => setCancellationReason(e.target.value)}
-                            placeholder="Descreva o motivo..."
-                            className="w-full bg-white border border-red-200 rounded-lg p-3 text-sm outline-none focus:ring-2 focus:ring-red-200"
-                            rows={3}
-                            autoFocus
-                        />
-                    </div>
-                )}
-
-                <div className="flex gap-3">
-                    <button
-                        onClick={() => { setIsCancelModalOpen(false); setCancellationReason(''); }}
-                        className="flex-1 py-2.5 px-4 border border-gray-200 rounded-xl text-gray-700 font-medium hover:bg-gray-50 transition-colors"
-                        disabled={loading} // Use realtime hook loading
-                    >
-                        Voltar
-                    </button>
-                    <button
-                        onClick={handleDeleteAppointment}
-                        disabled={loading || (selectedAppointment.status !== AppointmentStatus.BLOQUEADO && !cancellationReason.trim())}
-                        className="flex-1 py-2.5 px-4 bg-red-600 text-white rounded-xl font-medium hover:bg-red-700 transition-colors flex justify-center shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                        {loading ? 'Processando...' : 'Confirmar'}
-                    </button>
-                </div>
-            </div>
-        </div>
-      )}
-
-      {/* Configuration Modal */}
-       {isConfigOpen && currentDoctor && (
+      {/* Configuration Modal - Accessible to all authorized users */}
+       {isConfigOpen && currentDoctor && canConfigureAgenda && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
             <div className="w-full max-w-4xl h-[90vh]">
               <DoctorAvailabilityConfig 

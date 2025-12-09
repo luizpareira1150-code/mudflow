@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { ViewState, UserRole, AccountType } from '../types';
 import Sidebar from './Sidebar';
 import Patients from './Patients';
@@ -18,20 +18,8 @@ export const MainLayout: React.FC = () => {
   const { doctors, selectedDoctorId, setSelectedDoctorId, organization } = useClinic();
   const [currentView, setView] = useState<ViewState>(ViewState.Dashboard);
 
-  // Documentation Log for N8N (Developer Experience)
-  useEffect(() => {
-    if (user && user.role === UserRole.DOCTOR_ADMIN) {
-      console.groupCollapsed('📚 [MedFlow] Guia de Integração N8N');
-      console.log('1. Use o Webhook URL nas Configurações');
-      console.log('2. Exemplo de Payload para CREATE_APPOINTMENT:', {
-        action: 'CREATE_APPOINTMENT',
-        clinicId: user.clinicId,
-        authToken: 'YOUR_API_TOKEN',
-        data: { doctorId: 'doc_1', date: '2024-01-01', time: '10:00' }
-      });
-      console.groupEnd();
-    }
-  }, [user]);
+  // Security Note: Verbose console logs regarding N8N integration have been removed 
+  // to prevent information disclosure in production builds.
 
   if (!user) return null;
 
@@ -42,7 +30,6 @@ export const MainLayout: React.FC = () => {
             return <OwnerDashboard currentUser={user} />;
         }
         // For Doctors and Secretaries, "Dashboard" in navigation maps to CRM (Operational View)
-        // Doctors have a separate "Metrics" view for analytics
         return (
             <CRM 
                 user={user}
@@ -57,7 +44,7 @@ export const MainLayout: React.FC = () => {
         if (user.role === UserRole.DOCTOR_ADMIN) {
             return <MetricsDashboard user={user} organization={organization} />;
         }
-        // Fallback for unauthorized access to metrics -> CRM
+        // Fallback for unauthorized access -> CRM
         return (
             <CRM 
                 user={user}

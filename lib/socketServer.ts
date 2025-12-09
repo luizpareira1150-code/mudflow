@@ -1,11 +1,11 @@
 
+import { Appointment, Patient, Doctor, User, ClinicSettings, AgendaConfig } from '../types';
+
 /**
  * SERVIDOR WEBSOCKET SIMULADO
  * 
  * Como não temos backend real (localStorage mock), usamos BroadcastChannel
  * para comunicação entre tabs/janelas do navegador.
- * 
- * Quando tiver Supabase real, substituir por Socket.IO verdadeiro.
  */
 
 export enum SocketEvent {
@@ -32,9 +32,29 @@ export enum SocketEvent {
   AGENDA_CONFIG_UPDATED = 'agenda_config:updated'
 }
 
-interface SocketMessage {
-  event: SocketEvent;
-  data: any;
+// ✅ STRICT TYPE MAPPING FOR EVENTS
+export interface SocketPayloadMap {
+  [SocketEvent.APPOINTMENT_CREATED]: Appointment & { patient: Patient };
+  [SocketEvent.APPOINTMENT_UPDATED]: Appointment;
+  [SocketEvent.APPOINTMENT_DELETED]: { id: string; appointment: Appointment };
+  [SocketEvent.APPOINTMENT_STATUS_CHANGED]: { id: string; oldStatus: string; newStatus: string; appointment: Appointment };
+  
+  [SocketEvent.PATIENT_CREATED]: Patient;
+  [SocketEvent.PATIENT_UPDATED]: Patient;
+  
+  [SocketEvent.DOCTOR_CREATED]: Doctor;
+  [SocketEvent.DOCTOR_DELETED]: { id: string; doctor: Doctor };
+  
+  [SocketEvent.USER_CREATED]: User;
+  [SocketEvent.USER_DELETED]: { id: string; user: User };
+  
+  [SocketEvent.SETTINGS_UPDATED]: ClinicSettings;
+  [SocketEvent.AGENDA_CONFIG_UPDATED]: AgendaConfig;
+}
+
+interface SocketMessage<K extends keyof SocketPayloadMap = keyof SocketPayloadMap> {
+  event: K;
+  data: SocketPayloadMap[K];
   organizationId: string;
   timestamp: string;
   userId?: string;
@@ -51,7 +71,7 @@ class MockSocketServer {
     
     // Escutar mensagens de outras tabs
     this.channel.onmessage = (event) => {
-      const message: SocketMessage = event.data;
+      const message = event.data as SocketMessage;
       this.handleIncomingMessage(message);
     };
     
@@ -59,10 +79,15 @@ class MockSocketServer {
   }
   
   /**
-   * Emitir evento (broadcaster para todas as tabs)
+   * Emitir evento com TIPO ESTRITO
    */
-  emit(event: SocketEvent, data: any, organizationId: string, userId?: string): void {
-    const message: SocketMessage = {
+  emit<K extends keyof SocketPayloadMap>(
+    event: K, 
+    data: SocketPayloadMap[K], 
+    organizationId: string, 
+    userId?: string
+  ): void {
+    const message: SocketMessage<K> = {
       event,
       data,
       organizationId,
@@ -73,28 +98,27 @@ class MockSocketServer {
     // Enviar para todas as tabs abertas
     this.channel.postMessage(message);
     
-    // Opcional: Acionar listeners locais na mesma tab também (para consistência)
-    // No React com hooks de realtime, geralmente queremos recarregar dados
-    // independente se a mudança foi local ou remota para garantir sync.
+    // Acionar listeners locais
     this.handleIncomingMessage(message);
-    
-    // Log no console
-    // console.log('📡 [WebSocket] EMIT:', event, data);
   }
   
   /**
    * Escutar evento específico
    */
-  on(event: SocketEvent, callback: (data: any) => void): () => void {
+  on<K extends keyof SocketPayloadMap>(
+    event: K, 
+    callback: (data: SocketPayloadMap[K]) => void
+  ): () => void {
     if (!this.listeners.has(event)) {
       this.listeners.set(event, new Set());
     }
     
-    this.listeners.get(event)!.add(callback);
+    // Cast to generic listener for internal storage
+    this.listeners.get(event)!.add(callback as (data: any) => void);
     
     // Retornar função de cleanup
     return () => {
-      this.listeners.get(event)?.delete(callback);
+      this.listeners.get(event)?.delete(callback as (data: any) => void);
     };
   }
   

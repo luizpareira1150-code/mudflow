@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { User, DashboardMetrics, AccountType, Organization, Appointment } from '../types';
-import { dataService } from '../services/mockSupabase';
+import { analyticsService } from '../services/mockSupabase';
 import { appointmentService } from '../services/appointmentService'; // Direct service import for analysis
 import { analyzeRecoveryTrend } from '../services/geminiService';
 import { 
@@ -80,7 +80,7 @@ export const MetricsDashboard: React.FC<MetricsDashboardProps> = ({ user, organi
   const loadMetrics = async () => {
     setLoading(true);
     try {
-      const data = await dataService.getClinicMetrics(user.clinicId);
+      const data = await analyticsService.getClinicMetrics(user.clinicId);
       setMetrics(data);
     } catch (error) {
       console.error('Erro ao carregar métricas:', error);

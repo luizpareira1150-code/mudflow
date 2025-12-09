@@ -5,7 +5,7 @@ import { systemLogService } from '../services/mockSupabase';
 import { 
   Search, Filter, FileText, User as UserIcon, Calendar, 
   Clock, ChevronDown, Activity, Globe, Bot, Server, 
-  MessageSquare, AlertTriangle, Download, AlertCircle, X
+  MessageSquare, AlertTriangle, Download, AlertCircle, X, Bug
 } from 'lucide-react';
 import { LogDetailsModal } from './LogDetailsModal';
 import { formatDateTimeBR } from '../utils/dateUtils';
@@ -90,6 +90,7 @@ export const ActivityLogs: React.FC<ActivityLogsProps> = ({ user }) => {
   };
 
   const getActionIcon = (action: string) => {
+      if (action === AuditAction.SYSTEM_ERROR) return <Bug size={18} />;
       if (action.includes('CREATED')) return <FileText size={18} />;
       if (action.includes('DELETED')) return <X size={18} />;
       if (action.includes('UPDATED')) return <Activity size={18} />;
@@ -97,6 +98,7 @@ export const ActivityLogs: React.FC<ActivityLogsProps> = ({ user }) => {
   }
 
   const getActionColor = (action: string) => {
+      if (action === AuditAction.SYSTEM_ERROR) return 'bg-red-100 text-red-800 border-red-200';
       if (action.includes('CREATED')) return 'bg-green-50 text-green-700 border-green-100';
       if (action.includes('DELETED')) return 'bg-red-50 text-red-700 border-red-100';
       if (action.includes('UPDATED') || action.includes('CHANGED')) return 'bg-blue-50 text-blue-700 border-blue-100';
@@ -226,6 +228,7 @@ export const ActivityLogs: React.FC<ActivityLogsProps> = ({ user }) => {
                 <option value="USER_LOGIN">Login</option>
                 <option value="USER_LOGOUT">Logout</option>
                 <option value="SETTINGS_UPDATED">Configurações Alteradas</option>
+                <option value="SYSTEM_ERROR">⚠ Erros do Sistema</option>
               </select>
               <ChevronDown size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
             </div>

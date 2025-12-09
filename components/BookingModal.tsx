@@ -7,6 +7,7 @@ interface BookingModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSuccess: () => void;
+  onConflict?: () => void;
   user: User;
   preSelectedDate?: string;
   preSelectedTime?: string;
@@ -17,6 +18,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
   isOpen, 
   onClose, 
   onSuccess, 
+  onConflict,
   user, 
   preSelectedDate,
   preSelectedTime,
@@ -34,6 +36,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
             organizationId={user.clinicId}
             onSuccess={() => { onSuccess(); onClose(); }}
             onCancel={onClose}
+            onConflict={onConflict}
             initialDate={preSelectedDate}
             initialTime={preSelectedTime}
             initialDoctorId={preSelectedDoctorId}

@@ -1,6 +1,7 @@
+
 import React, { useState } from 'react';
 import { User } from '../../types';
-import { dataService, authService } from '../../services/mockSupabase';
+import { doctorService, authService } from '../../services/mockSupabase';
 import { UserCog, Lock, Save, ShieldCheck } from 'lucide-react';
 import { useToast } from '../ToastProvider';
 
@@ -61,7 +62,7 @@ export const AdminProfile: React.FC<AdminProfileProps> = ({ currentUser }) => {
       }
 
       // 3. Update User via Service
-      await dataService.updateUser(currentUser.id, updates);
+      await doctorService.updateUser(currentUser.id, updates);
       
       showToast('success', 'Perfil atualizado com sucesso!');
       setFormData(prev => ({ ...prev, newPassword: '', confirmNewPassword: '', currentPassword: '' }));

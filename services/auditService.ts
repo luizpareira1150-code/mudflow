@@ -18,8 +18,8 @@ export const systemLogService = {
         source?: string;
         startDate?: string;
         endDate?: string;
-        limit?: number; // Novo
-        offset?: number; // Novo
+        limit?: number; 
+        offset?: number; 
     }
   ): Promise<{ logs: AuditLog[], total: number }> => {
     await delay(300); // Simulando latência de rede
@@ -36,8 +36,6 @@ export const systemLogService = {
         }
         
         // CRITICAL FIX: Date Parsing for Local Timezone Compatibility
-        // Ensure we construct the date boundaries based on Local Time components
-        // to match the user's perception of "Today" or specific dates.
         if (filters.startDate) {
             const [y, m, d] = filters.startDate.split('-').map(Number);
             const start = new Date(y, m - 1, d, 0, 0, 0, 0); // Local Midnight
@@ -68,7 +66,6 @@ export const systemLogService = {
     const limit = filters?.limit || 50;
     const offset = filters?.offset || 0;
 
-    // Retorna apenas a fatia da página
     return {
         logs: filtered.slice(offset, offset + limit),
         total
@@ -99,15 +96,17 @@ export const systemLogService = {
 
     const newLog: AuditLog = {
       ...logParams,
-      id: `log_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
+      // GOVERNANCE: Use crypto.randomUUID()
+      id: crypto.randomUUID(),
       timestamp: new Date().toISOString(),
       createdAt: new Date().toISOString(),
       userId: userId!,
       userName: userName!
     };
     
-    // Performance: Manter apenas os últimos 5000 logs no mock para não travar o browser
-    if (logs.length > 5000) {
+    // SAFETY: Reduce max log size to 1000 to avoid LocalStorage Quota Exceeded Crash
+    // 5000 logs was too high (~2MB+), 1000 is safer (~400KB).
+    if (logs.length > 1000) {
         logs.shift(); // Remove o mais antigo
     }
     
@@ -117,8 +116,6 @@ export const systemLogService = {
   },
 
   getAuditStats: async (clinicId: string) => {
-      // Fetch sem paginação apenas para stats (em produção seria um SELECT COUNT)
-      // Como estamos no mock, pegamos tudo, mas filtramos rápido.
       const logs = getStorage<AuditLog[]>(STORAGE_KEYS.LOGS, initialLogs).filter(l => l.organizationId === clinicId);
       
       const now = new Date();

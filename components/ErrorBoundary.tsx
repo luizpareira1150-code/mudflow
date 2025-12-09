@@ -12,6 +12,7 @@ interface ErrorBoundaryState {
   errorInfo: ErrorInfo | null;
   isDetailsOpen: boolean;
   copied: boolean;
+  errorId: string;
 }
 
 export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
@@ -22,7 +23,9 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
       error: null,
       errorInfo: null,
       isDetailsOpen: false,
-      copied: false
+      copied: false,
+      // GOVERNANCE: Use crypto.randomUUID() for error tracking ID
+      errorId: crypto.randomUUID().slice(0, 8).toUpperCase()
     };
   }
 
@@ -32,7 +35,8 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
       error, 
       errorInfo: null,
       isDetailsOpen: false,
-      copied: false
+      copied: false,
+      errorId: crypto.randomUUID().slice(0, 8).toUpperCase()
     };
   }
 
@@ -40,14 +44,15 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
     // Integrate with Monitoring Service
     monitoringService.trackError(error, { 
         componentStack: errorInfo.componentStack,
-        source: 'ErrorBoundary'
+        source: 'ErrorBoundary',
+        errorId: this.state.errorId
     });
     
     this.setState({ errorInfo });
   }
 
   handleReset = () => {
-    this.setState({ hasError: false, error: null, errorInfo: null, isDetailsOpen: false });
+    this.setState({ hasError: false, error: null, errorInfo: null, isDetailsOpen: false, errorId: '' });
   };
 
   handleReload = () => {
@@ -55,7 +60,7 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
   };
 
   copyErrorToClipboard = () => {
-    const text = `Error: ${this.state.error?.message}\n\nStack: ${this.state.errorInfo?.componentStack}`;
+    const text = `Error ID: ${this.state.errorId}\nMessage: ${this.state.error?.message}\n\nStack: ${this.state.errorInfo?.componentStack}`;
     navigator.clipboard.writeText(text);
     this.setState({ copied: true });
     setTimeout(() => this.setState({ copied: false }), 2000);
@@ -129,7 +134,7 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
             
             <div className="bg-slate-50 p-4 text-center border-t border-slate-200">
                 <p className="text-xs text-slate-400">
-                    ID do Erro: {Math.random().toString(36).substr(2, 8).toUpperCase()}
+                    ID do Erro: {this.state.errorId}
                 </p>
             </div>
           </div>

@@ -2,7 +2,7 @@
 import React, { useState } from 'react';
 import { Patient, PatientStatus, Appointment } from '../types';
 import { generateSmartSummary } from '../services/geminiService';
-import { dataService } from '../services/mockSupabase'; // To fetch history
+import { appointmentService } from '../services/appointmentService';
 import { Search, Filter, MoreHorizontal, Sparkles, X, Calendar, History } from 'lucide-react';
 import { authService } from '../services/mockSupabase';
 import { useRealtimePatients } from '../hooks/useRealtimeData';
@@ -26,7 +26,7 @@ const Patients: React.FC = () => {
     setPatientHistory([]);
 
     // 1. Load History
-    const history = await dataService.getPatientAppointments(patient.id);
+    const history = await appointmentService.getPatientAppointments(patient.id);
     setPatientHistory(history);
 
     // 2. Generate CRM Summary (Wait slightly for effect)
@@ -230,5 +230,4 @@ const Patients: React.FC = () => {
     </div>
   );
 };
-
 export default Patients;

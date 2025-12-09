@@ -168,13 +168,24 @@ export const analyticsService = {
         const totalAttended = monthAppts.filter(a => a.status === AppointmentStatus.ATENDIDO).length;
         const totalNoShow = monthAppts.filter(a => a.status === AppointmentStatus.NAO_VEIO).length;
         
-        // Health Score Logic
-        let healthScore: 'healthy' | 'attention' | 'risk' = 'healthy';
-        const occupancyRate = 50; // Mocked occupancy for now as we don't calculate full slots here
+        // ✅ DYNAMIC CAPACITY CALCULATION (Fixing Zombie Data)
+        // Estimate Capacity: 
+        // Consultorio: 1 Doctor * 20 days * 15 slots = 300 slots/month
+        // Clinica: Est. 5 Active Doctors * 20 days * 15 slots = 1500 slots/month
+        const estimatedCapacity = org.accountType === AccountType.CONSULTORIO ? 300 : 1500;
+        
+        const availableSlots = Math.max(0, estimatedCapacity - totalScheduled);
+        const occupancyRate = totalScheduled > 0 
+            ? Math.min((totalScheduled / estimatedCapacity) * 100, 100) 
+            : 0;
+
         const noShowRate = totalScheduled > 0 ? (totalNoShow / totalScheduled) * 100 : 0;
         
+        // Health Score Logic
+        let healthScore: 'healthy' | 'attention' | 'risk' = 'healthy';
+        
         if (totalScheduled === 0) healthScore = 'risk';
-        else if (noShowRate > 20) healthScore = 'attention';
+        else if (noShowRate > 20 || occupancyRate < 10) healthScore = 'attention';
 
         return {
             clientId: org.id,
@@ -187,7 +198,7 @@ export const analyticsService = {
             occupancyRate,
             monthlyScheduled: totalScheduled,
             growthVsLastMonth: 0, // Needs historical data
-            availableSlots: 100, // Mocked capacity
+            availableSlots,
             noShowRate,
             webhookStatus: orgSettings?.n8nWebhookUrl ? 'healthy' : 'error',
             needsTrafficAnalysis: totalScheduled < 10,
