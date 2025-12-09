@@ -1,4 +1,4 @@
-import React, { Component, ErrorInfo, ReactNode } from 'react';
+import React, { ErrorInfo, ReactNode } from 'react';
 import { AlertTriangle, RefreshCw, ChevronDown, ChevronRight, Copy, CheckCircle } from 'lucide-react';
 import { monitoringService } from '../services/monitoring';
 
@@ -15,19 +15,16 @@ interface ErrorBoundaryState {
   errorId: string;
 }
 
-export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
-  constructor(props: ErrorBoundaryProps) {
-    super(props);
-    this.state = {
-      hasError: false,
-      error: null,
-      errorInfo: null,
-      isDetailsOpen: false,
-      copied: false,
-      // GOVERNANCE: Use crypto.randomUUID() for error tracking ID
-      errorId: crypto.randomUUID().slice(0, 8).toUpperCase()
-    };
-  }
+export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoundaryState> {
+  state: ErrorBoundaryState = {
+    hasError: false,
+    error: null,
+    errorInfo: null,
+    isDetailsOpen: false,
+    copied: false,
+    // GOVERNANCE: Use crypto.randomUUID() for error tracking ID
+    errorId: crypto.randomUUID().slice(0, 8).toUpperCase()
+  };
 
   static getDerivedStateFromError(error: Error): Partial<ErrorBoundaryState> {
     return { 

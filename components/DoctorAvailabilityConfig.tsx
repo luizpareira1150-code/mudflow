@@ -4,7 +4,7 @@ import { Doctor, DoctorAvailability, DoctorAbsence, DayOfWeek, AgendaReleaseType
 import { doctorAvailabilityService } from '../services/doctorAvailabilityService';
 import { agendaReleaseService } from '../services/agendaReleaseService';
 import { authService, settingsService } from '../services/mockSupabase';
-import { Clock, X, Plus, Trash2, AlertCircle, Save, Settings, CalendarOff, ChevronDown, ShieldCheck } from 'lucide-react';
+import { Clock, X, Plus, Trash2, AlertCircle, Save, Settings, CalendarOff, ChevronDown, ShieldCheck, CalendarCheck } from 'lucide-react';
 import { useToast } from './ToastProvider';
 import { DatePicker } from './DatePicker';
 
@@ -275,7 +275,15 @@ export const DoctorAvailabilityConfig: React.FC<DoctorAvailabilityConfigProps> =
             Ausências & Férias
             {absences.length > 0 && <span className="bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full text-xs ml-2">{absences.length}</span>}
         </button>
-        {/* Release Rules Tab Icon Logic could go here */}
+        <button
+            onClick={() => setActiveTab('release_rules')}
+            className={`flex items-center gap-2 px-4 py-4 text-sm font-medium transition-colors border-b-2 whitespace-nowrap ${
+                activeTab === 'release_rules' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'
+            }`}
+        >
+            <CalendarCheck size={18} />
+            Regras de Abertura
+        </button>
         <button
             onClick={() => setActiveTab('settings')}
             className={`flex items-center gap-2 px-4 py-4 text-sm font-medium transition-colors border-b-2 whitespace-nowrap ${
@@ -468,6 +476,132 @@ export const DoctorAvailabilityConfig: React.FC<DoctorAvailabilityConfigProps> =
                     </div>
                 )}
 
+                {/* TAB: RELEASE RULES (RESTORED AS DROPDOWN) */}
+                {activeTab === 'release_rules' && (
+                    <div className="max-w-3xl mx-auto space-y-6">
+                        <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
+                            <h4 className="font-bold text-gray-800 mb-6 text-lg flex items-center gap-2">
+                                <CalendarCheck size={20} className="text-blue-600" />
+                                Regras de Liberação
+                            </h4>
+                            
+                            <div className="mb-6">
+                                <label className="block text-sm font-medium text-gray-700 mb-2">Modo de Abertura</label>
+                                <div className="relative">
+                                    <select
+                                        value={releaseType}
+                                        onChange={(e) => setReleaseType(e.target.value as AgendaReleaseType)}
+                                        className="w-full border border-gray-200 bg-white rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-blue-500 appearance-none text-gray-700 font-medium"
+                                    >
+                                        <option value={AgendaReleaseType.ALWAYS_OPEN}>Sempre Aberta (Padrão)</option>
+                                        <option value={AgendaReleaseType.WEEKLY_RELEASE}>Liberação Semanal</option>
+                                        <option value={AgendaReleaseType.MONTHLY_RELEASE}>Liberação Mensal</option>
+                                    </select>
+                                    <ChevronDown size={20} className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+                                </div>
+                                <div className="mt-2 text-xs text-gray-500">
+                                    {releaseType === AgendaReleaseType.ALWAYS_OPEN && "A agenda fica disponível conforme a antecedência máxima (ex: 30 dias)."}
+                                    {releaseType === AgendaReleaseType.WEEKLY_RELEASE && "Define um dia e hora específicos da semana para abrir a agenda da semana seguinte."}
+                                    {releaseType === AgendaReleaseType.MONTHLY_RELEASE && "Define um dia do mês para abrir a agenda do mês seguinte (ex: dia 21)."}
+                                </div>
+                            </div>
+
+                            {/* Conditional Forms inside white container */}
+                            {releaseType === AgendaReleaseType.WEEKLY_RELEASE && (
+                                <div className="border-t border-gray-100 pt-6 animate-in fade-in">
+                                    <h5 className="font-bold text-gray-700 mb-4 text-sm uppercase">Configuração Semanal</h5>
+                                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                                        <div>
+                                            <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Dia da Liberação</label>
+                                            <div className="relative">
+                                                <select 
+                                                    value={weeklyRelease.dayOfWeek}
+                                                    onChange={(e) => setWeeklyRelease({...weeklyRelease, dayOfWeek: Number(e.target.value)})}
+                                                    className="w-full border border-gray-200 rounded-lg px-3 py-2 bg-white appearance-none"
+                                                >
+                                                    {dayNames.map(d => <option key={d.key} value={d.key}>{d.label}</option>)}
+                                                </select>
+                                                <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+                                            </div>
+                                        </div>
+                                        <div>
+                                            <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Horário</label>
+                                            <input 
+                                                type="time" 
+                                                value={weeklyRelease.hour}
+                                                onChange={(e) => setWeeklyRelease({...weeklyRelease, hour: e.target.value})}
+                                                className="w-full border border-gray-200 rounded-lg px-3 py-2 bg-white"
+                                            />
+                                        </div>
+                                        <div>
+                                            <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Antecedência Máxima (Dias)</label>
+                                            <input 
+                                                type="number" 
+                                                min="0"
+                                                max="365"
+                                                value={weeklyRelease.advanceDays}
+                                                onChange={(e) => setWeeklyRelease({...weeklyRelease, advanceDays: Number(e.target.value)})}
+                                                className="w-full border border-gray-200 rounded-lg px-3 py-2 bg-white"
+                                            />
+                                            <p className="text-[10px] text-gray-400 mt-1">Ex: 2 dias antes</p>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+
+                            {releaseType === AgendaReleaseType.MONTHLY_RELEASE && (
+                                <div className="border-t border-gray-100 pt-6 animate-in fade-in">
+                                    <h5 className="font-bold text-gray-700 mb-4 text-sm uppercase">Configuração Mensal</h5>
+                                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                                        <div>
+                                            <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Dia do Mês</label>
+                                            <input 
+                                                type="number" 
+                                                min="1" max="31"
+                                                value={monthlyRelease.releaseDay}
+                                                onChange={(e) => setMonthlyRelease({...monthlyRelease, releaseDay: Number(e.target.value)})}
+                                                className="w-full border border-gray-200 rounded-lg px-3 py-2 bg-white"
+                                            />
+                                        </div>
+                                        <div>
+                                            <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Horário</label>
+                                            <input 
+                                                type="time" 
+                                                value={monthlyRelease.hour}
+                                                onChange={(e) => setMonthlyRelease({...monthlyRelease, hour: e.target.value})}
+                                                className="w-full border border-gray-200 rounded-lg px-3 py-2 bg-white"
+                                            />
+                                        </div>
+                                        <div>
+                                            <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Alvo (Meses à frente)</label>
+                                            <input 
+                                                type="number" 
+                                                min="0"
+                                                max="12"
+                                                value={monthlyRelease.targetMonthOffset}
+                                                onChange={(e) => setMonthlyRelease({...monthlyRelease, targetMonthOffset: Number(e.target.value)})}
+                                                className="w-full border border-gray-200 rounded-lg px-3 py-2 bg-white"
+                                            />
+                                            <p className="text-[10px] text-gray-400 mt-1">1 = Próximo mês</p>
+                                        </div>
+                                        <div className="md:col-span-3 flex items-center pt-2">
+                                            <label className="flex items-center gap-2 cursor-pointer">
+                                                <input 
+                                                    type="checkbox"
+                                                    checked={monthlyRelease.fallbackToWeekday}
+                                                    onChange={(e) => setMonthlyRelease({...monthlyRelease, fallbackToWeekday: e.target.checked})}
+                                                    className="w-4 h-4 text-blue-600 rounded border-gray-300"
+                                                />
+                                                <span className="text-sm text-gray-700">Evitar Fim de Semana?</span>
+                                            </label>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                )}
+
                 {/* TAB: SETTINGS */}
                 {activeTab === 'settings' && (
                     <div className="max-w-3xl mx-auto">
@@ -501,24 +635,8 @@ export const DoctorAvailabilityConfig: React.FC<DoctorAvailabilityConfigProps> =
                                             Define o tempo padrão de cada horário na agenda.
                                         </p>
                                     </div>
-
-                                    {/* Advance Booking Limit */}
-                                    <div>
-                                        <label className="block text-sm font-medium text-gray-700 mb-2">
-                                            Antecedência Máxima (Dias)
-                                        </label>
-                                        <input
-                                            type="number"
-                                            value={advanceBookingDays}
-                                            onChange={(e) => setAdvanceBookingDays(Number(e.target.value))}
-                                            className="w-full border border-gray-200 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-blue-500"
-                                            min="1"
-                                            max="365"
-                                        />
-                                        <p className="text-xs text-gray-500 mt-1">
-                                            Quantos dias à frente o paciente pode agendar.
-                                        </p>
-                                    </div>
+                                    
+                                    {/* Advance Booking Limit REMOVED here */}
                                 </div>
                             </div>
                         </div>
