@@ -34,58 +34,6 @@ class RateLimiterService {
   }
 
   /**
-   * Carrega o bucket do localStorage ou cria um novo se não existir.
-   */
-  private loadBucket(key: string): TokenBucket {
-    try {
-      const stored = localStorage.getItem(`${STORAGE_PREFIX}${key}`);
-      if (stored) {
-        return JSON.parse(stored);
-      }
-    } catch (e) {
-      console.warn('RateLimiter: Error parsing bucket', e);
-    }
-
-    // Default: Novo bucket cheio
-    return {
-      tokens: this.capacity,
-      lastRefill: Date.now()
-    };
-  }
-
-  /**
-   * Salva o estado do bucket no localStorage.
-   */
-  private saveBucket(key: string, bucket: TokenBucket): void {
-    try {
-      localStorage.setItem(`${STORAGE_PREFIX}${key}`, JSON.stringify(bucket));
-    } catch (e) {
-      console.warn('RateLimiter: Error saving bucket', e);
-    }
-  }
-
-  /**
-   * Verifica se a requisição pode ser processada.
-   * Consome 1 token se permitido e persiste o estado.
-   */
-  public checkLimit(key: string): boolean {
-    const now = Date.now();
-    let bucket = this.loadBucket(key);
-
-    // Recarrega tokens antes de verificar
-    this.refill(bucket, now);
-
-    if (bucket.tokens >= 1) {
-      bucket.tokens -= 1;
-      this.saveBucket(key, bucket); // Persiste o consumo
-      return true; // Permitido
-    }
-
-    this.saveBucket(key, bucket); // Persiste o estado atual (mesmo vazio)
-    return false; // Bloqueado (Rate Limit Exceeded)
-  }
-
-  /**
    * Recarrega tokens baseado no tempo decorrido.
    * Modifica o objeto bucket por referência.
    */
@@ -97,6 +45,68 @@ class RateLimiterService {
       bucket.tokens = Math.min(this.capacity, bucket.tokens + newTokens);
       bucket.lastRefill = now;
     }
+  }
+
+  /**
+   * Verifica se a requisição pode ser processada.
+   * Consome 1 token se permitido e persiste o estado.
+   * 
+   * FIX: Race Condition Protection (Optimistic Locking)
+   * Agora assíncrono para suportar retentativas com backoff.
+   */
+  public async checkLimit(key: string): Promise<boolean> {
+    const MAX_RETRIES = 3;
+    const storageKey = `${STORAGE_PREFIX}${key}`;
+
+    for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+        const now = Date.now();
+        
+        // 1. Snapshot: Ler o estado cru atual para comparação futura
+        const rawSnapshot = localStorage.getItem(storageKey);
+        
+        let bucket: TokenBucket;
+        if (rawSnapshot) {
+            try {
+                bucket = JSON.parse(rawSnapshot);
+            } catch {
+                bucket = { tokens: this.capacity, lastRefill: now };
+            }
+        } else {
+            bucket = { tokens: this.capacity, lastRefill: now };
+        }
+
+        // 2. Lógica de Refill (Em memória)
+        this.refill(bucket, now);
+
+        if (bucket.tokens >= 1) {
+            bucket.tokens -= 1;
+            const newRaw = JSON.stringify(bucket);
+            
+            // 3. Verificação Atômica (Optimistic Lock)
+            // Se o valor no storage ainda for igual ao snapshot que lemos, ninguém mexeu.
+            if (localStorage.getItem(storageKey) === rawSnapshot) {
+                localStorage.setItem(storageKey, newRaw);
+                return true; // Sucesso: Token consumido
+            }
+        } else {
+            // Falha: Sem tokens.
+            // Tentamos salvar apenas o refill (atualizar timestamp) para não desperdiçar o cálculo,
+            // mas se falhar a concorrência, não tem problema (o próximo request recalcula).
+            const newRaw = JSON.stringify(bucket);
+            if (localStorage.getItem(storageKey) === rawSnapshot) {
+                localStorage.setItem(storageKey, newRaw);
+                return false; // Negado
+            }
+        }
+
+        // 4. Conflito detectado: Esperar antes de tentar de novo (Backoff exponencial)
+        // 50ms, 100ms, 200ms
+        await new Promise(resolve => setTimeout(resolve, 50 * Math.pow(2, attempt)));
+    }
+
+    // Se falhar após retentativas devido a alta concorrência, negamos por segurança
+    console.warn(`[RateLimiter] High contention on key ${key}, request denied.`);
+    return false;
   }
 
   /**
@@ -127,21 +137,25 @@ class RateLimiterService {
   }
 
   /**
-   * Retorna estado atual (para debug/admin).
-   * Calcula a projeção atual sem persistir.
+   * Retorna estado atual (apenas leitura, para debug/admin).
    */
   public getBucketStatus(key: string) {
-    const bucket = this.loadBucket(key);
-    
-    // Simula um refill visual sem alterar estado persistido
-    const now = Date.now();
-    const elapsedSeconds = (now - bucket.lastRefill) / 1000;
-    const currentTokens = Math.min(this.capacity, bucket.tokens + (elapsedSeconds * this.refillRate));
-    
-    return {
-      tokens: Math.floor(currentTokens),
-      max: this.capacity
-    };
+    try {
+      const stored = localStorage.getItem(`${STORAGE_PREFIX}${key}`);
+      const bucket: TokenBucket = stored ? JSON.parse(stored) : { tokens: this.capacity, lastRefill: Date.now() };
+      
+      // Simula refill visual
+      const now = Date.now();
+      const elapsedSeconds = (now - bucket.lastRefill) / 1000;
+      const currentTokens = Math.min(this.capacity, bucket.tokens + (elapsedSeconds * this.refillRate));
+      
+      return {
+        tokens: Math.floor(currentTokens),
+        max: this.capacity
+      };
+    } catch {
+      return { tokens: this.capacity, max: this.capacity };
+    }
   }
 }
 

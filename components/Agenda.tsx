@@ -304,6 +304,8 @@ export const Agenda: React.FC<AgendaProps> = ({
                         );
                         if (nextDates.length > 0) {
                             setSelectedDate(nextDates[0]);
+                        } else {
+                            showToast('info', 'Não encontramos horários livres nos próximos 60 dias.');
                         }
                     }}
                     className="text-xs text-yellow-700 underline hover:text-yellow-900 mt-1 font-medium"

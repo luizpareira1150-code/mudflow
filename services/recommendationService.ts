@@ -19,7 +19,6 @@ export const recommendationService = {
         // Calculate Day preference (0-6)
         const dayCounts: Record<number, number> = {};
         history.forEach(apt => {
-            const day = new Date(apt.date).getDay(); // getDay is 0 (Sun) to 6 (Sat)
             // Fix: getDay uses local time, but date string is YYYY-MM-DD.
             // Better to parse manually to avoid timezone shifts
             const [y, m, d] = apt.date.split('-').map(Number);
@@ -47,21 +46,33 @@ export const recommendationService = {
         }
     }
 
-    // 2. Scan Next 15 Days
+    // 2. Scan Next 15 Days (OPTIMIZED: Parallel Execution)
     const candidates: RecommendedSlot[] = [];
     const today = new Date();
     
-    // We limit to 15 days lookahead
-    for(let i=1; i<=15; i++) {
+    // Generate dates to check
+    const datesCheckList = Array.from({ length: 15 }, (_, i) => {
         const d = new Date(today);
-        d.setDate(today.getDate() + i);
-        const dateStr = d.toISOString().split('T')[0];
-        
-        // Fetch slots for this day
-        const slots = await appointmentService.getAvailableSlots(clinicId, doctorId, dateStr);
+        d.setDate(today.getDate() + (i + 1));
+        return d;
+    });
+
+    // Execute all API calls in parallel using Promise.all
+    // This reduces latency from (15 * 300ms = 4.5s) to (~300ms)
+    const slotsResults = await Promise.all(
+        datesCheckList.map(async (d) => {
+            const dateStr = d.toISOString().split('T')[0];
+            const slots = await appointmentService.getAvailableSlots(clinicId, doctorId, dateStr);
+            return { dateObj: d, slots };
+        })
+    );
+    
+    // Process results synchronously
+    slotsResults.forEach(({ dateObj, slots }, index) => {
         const available = slots.filter(s => !s.isBooked && !s.isReserved);
-        
-        const dayOfWeek = d.getDay();
+        const dayOfWeek = dateObj.getDay();
+        // Distance in days from today (index + 1)
+        const daysFromToday = index + 1; 
         
         available.forEach(slot => {
             let score = 0;
@@ -76,12 +87,12 @@ export const recommendationService = {
                 score += 20; // Medium weight for time of day
             }
             // Bonus for sooner slots (decaying)
-            score += Math.max(0, 15 - i); 
+            score += Math.max(0, 15 - daysFromToday); 
 
             // Construct reason
             let reasonParts = [];
             if (preferredDayOfWeek !== null && dayOfWeek === preferredDayOfWeek) {
-                const dayName = d.toLocaleDateString('pt-BR', { weekday: 'long' });
+                const dayName = dateObj.toLocaleDateString('pt-BR', { weekday: 'long' });
                 reasonParts.push(`Costuma vir às ${dayName}s`);
             }
             if (preferredPeriod !== null && period === preferredPeriod) {
@@ -95,7 +106,7 @@ export const recommendationService = {
                 reason: reasonParts.join(' • ')
             });
         });
-    }
+    });
 
     // Sort by score desc and take top 3
     return candidates

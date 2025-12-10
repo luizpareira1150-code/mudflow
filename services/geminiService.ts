@@ -1,9 +1,9 @@
-
-import { GoogleGenAI } from "@google/genai";
+import { GoogleGenAI, GenerateContentResponse } from "@google/genai";
 import { Patient, Appointment } from '../types';
 
 const apiKey = process.env.API_KEY || '';
 const ai = apiKey ? new GoogleGenAI({ apiKey }) : null;
+const TIMEOUT_MS = 15000; // 15 seconds limit
 
 /**
  * Helper to sanitize LLM output before parsing.
@@ -16,6 +16,29 @@ const cleanAIResponse = (text: string): string => {
     .replace(/^```\s*/, '')     // Remove generic start block
     .replace(/\s*```$/, '')     // Remove end block
     .trim();
+};
+
+/**
+ * WRAPPER DE SEGURANÇA: Timeout
+ * Força a promise a rejeitar se a API demorar demais.
+ */
+const runWithTimeout = async <T>(promise: Promise<T>): Promise<T> => {
+    let timeoutHandle: any;
+    
+    const timeoutPromise = new Promise<never>((_, reject) => {
+        timeoutHandle = setTimeout(() => {
+            reject(new Error('TIMEOUT_GEMINI'));
+        }, TIMEOUT_MS);
+    });
+
+    try {
+        const result = await Promise.race([promise, timeoutPromise]);
+        clearTimeout(timeoutHandle);
+        return result;
+    } catch (error) {
+        clearTimeout(timeoutHandle);
+        throw error;
+    }
 };
 
 export const generateSmartSummary = async (patient: Patient, appointments: Appointment[]): Promise<string> => {
@@ -57,14 +80,20 @@ export const generateSmartSummary = async (patient: Patient, appointments: Appoi
       Usuário desde: ${patient.createdAt}
     `;
 
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
-      contents: prompt,
-    });
+    // PROTECTION: 15s Timeout
+    const response = (await runWithTimeout(
+        ai.models.generateContent({
+            model: 'gemini-2.5-flash',
+            contents: prompt,
+        })
+    )) as GenerateContentResponse;
 
     return response.text || "Resumo indisponível no momento.";
-  } catch (error) {
+  } catch (error: any) {
     console.error("Gemini API Error:", error);
+    if (error.message === 'TIMEOUT_GEMINI') {
+        return "⚠️ A análise demorou muito. O sistema está sobrecarregado, tente novamente em instantes.";
+    }
     return "Não foi possível gerar o resumo operacional.";
   }
 };
@@ -89,13 +118,16 @@ export const generateWebhookPayload = async (event: string, contextData: any): P
       Return ONLY the JSON. Do not add markdown formatting.
     `;
 
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
-      contents: prompt,
-      config: {
-        responseMimeType: 'application/json'
-      }
-    });
+    // PROTECTION: 15s Timeout
+    const response = (await runWithTimeout(
+        ai.models.generateContent({
+            model: 'gemini-2.5-flash',
+            contents: prompt,
+            config: {
+                responseMimeType: 'application/json'
+            }
+        })
+    )) as GenerateContentResponse;
 
     const text = response.text;
     if (text) {
@@ -114,7 +146,7 @@ export const generateWebhookPayload = async (event: string, contextData: any): P
       event,
       timestamp: new Date().toISOString(),
       data: contextData,
-      note: "Generated via fallback (AI error)"
+      note: "Generated via fallback (AI error or Timeout)"
     };
   }
 };
@@ -145,14 +177,18 @@ export const analyzeRecoveryTrend = async (appointments: Appointment[]): Promise
             Dados Brutos (JSON simplificado para economizar tokens): 
             ${JSON.stringify(appointments.map(a => ({ d: a.date, t: a.time, s: a.status })), null, 0)}
         `;
-         const response = await ai.models.generateContent({
-            model: 'gemini-2.5-flash',
-            contents: prompt,
-        });
+        
+        // PROTECTION: 15s Timeout
+        const response = (await runWithTimeout(
+            ai.models.generateContent({
+                model: 'gemini-2.5-flash',
+                contents: prompt,
+            })
+        )) as GenerateContentResponse;
         return response.text || "Análise não gerada.";
 
     } catch (e) {
         console.error(e);
-        return "Análise indisponível no momento.";
+        return "Análise indisponível no momento (Timeout ou Erro).";
     }
 }

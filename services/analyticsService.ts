@@ -21,25 +21,52 @@ export const analyticsService = {
         rawAppts = rawAppts.filter(a => a.date >= startDate && a.date <= endDate);
     }
 
-    // --- GENERAL CALCULATIONS ---
+    // --- GENERAL CALCULATIONS (OPTIMIZED O(N)) ---
 
-    // 1. Time Periods
+    // 1. Time Periods Definitions
     const firstDayThisMonth = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0];
     const lastDayThisMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().split('T')[0];
     const firstDayLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1).toISOString().split('T')[0];
     const lastDayLastMonth = new Date(now.getFullYear(), now.getMonth(), 0).toISOString().split('T')[0];
     
-    const appointmentsThisMonth = rawAppts.filter(a => a.date >= firstDayThisMonth && a.date <= lastDayThisMonth).length;
-    const appointmentsLastMonth = rawAppts.filter(a => a.date >= firstDayLastMonth && a.date <= lastDayLastMonth).length;
-
-    // 2. General Status Breakdown
-    const statusBreakdown = {
-        EM_CONTATO: rawAppts.filter(a => a.status === AppointmentStatus.EM_CONTATO).length,
-        AGENDADO: rawAppts.filter(a => a.status === AppointmentStatus.AGENDADO).length,
-        ATENDIDO: rawAppts.filter(a => a.status === AppointmentStatus.ATENDIDO).length,
-        NAO_VEIO: rawAppts.filter(a => a.status === AppointmentStatus.NAO_VEIO).length,
-        BLOQUEADO: rawAppts.filter(a => a.status === AppointmentStatus.BLOQUEADO).length,
+    // Initialize Accumulator Structure
+    const initialStats = {
+        thisMonth: 0,
+        lastMonth: 0,
+        statusCounts: {
+            [AppointmentStatus.EM_CONTATO]: 0,
+            [AppointmentStatus.AGENDADO]: 0,
+            [AppointmentStatus.ATENDIDO]: 0,
+            [AppointmentStatus.NAO_VEIO]: 0,
+            [AppointmentStatus.BLOQUEADO]: 0,
+            [AppointmentStatus.ATENDIMENTO_HUMANO]: 0
+        } as Record<AppointmentStatus, number>,
+        procedureCounts: {} as Record<string, number>
     };
+
+    // Single Pass Loop
+    const stats = rawAppts.reduce((acc, appt) => {
+        // Count by Month
+        if (appt.date >= firstDayThisMonth && appt.date <= lastDayThisMonth) acc.thisMonth++;
+        if (appt.date >= firstDayLastMonth && appt.date <= lastDayLastMonth) acc.lastMonth++;
+
+        // Count by Status
+        // Safety check: ensure status exists in our map (handle dirty data)
+        if (acc.statusCounts[appt.status] !== undefined) {
+            acc.statusCounts[appt.status]++;
+        }
+
+        // Count Procedures (for step 4)
+        if (appt.procedure) {
+            acc.procedureCounts[appt.procedure] = (acc.procedureCounts[appt.procedure] || 0) + 1;
+        }
+
+        return acc;
+    }, initialStats);
+
+    const appointmentsThisMonth = stats.thisMonth;
+    const appointmentsLastMonth = stats.lastMonth;
+    const statusBreakdown = stats.statusCounts;
 
     const totalCancelled = 0; // In a real app we'd track cancellations in a separate table or log
 
@@ -90,15 +117,8 @@ export const analyticsService = {
         };
     });
 
-    // 4. Top Procedures
-    const procedureCounts: Record<string, number> = {};
-    rawAppts.forEach(a => {
-        if (a.procedure) {
-            procedureCounts[a.procedure] = (procedureCounts[a.procedure] || 0) + 1;
-        }
-    });
-
-    const topProcedures = Object.entries(procedureCounts)
+    // 4. Top Procedures (Data already aggregated in Reduce loop)
+    const topProcedures = Object.entries(stats.procedureCounts)
         .map(([procedure, count]) => ({ procedure, count }))
         .sort((a, b) => b.count - a.count)
         .slice(0, 5);

@@ -1,5 +1,6 @@
 
 import { Notification, NotificationType, NotificationPriority, UserRole } from '../types';
+import { sanitizeInput } from '../utils/sanitizer';
 
 const STORAGE_KEY = 'medflow_notifications';
 
@@ -76,8 +77,9 @@ class NotificationService {
     const newNotification: Notification = {
       // GOVERNANCE: Use crypto.randomUUID()
       id: crypto.randomUUID(),
-      title: params.title,
-      message: params.message,
+      // SECURITY: Sanitize input to prevent Stored XSS via Webhooks
+      title: sanitizeInput(params.title),
+      message: sanitizeInput(params.message),
       type: params.type,
       priority: params.priority || 'medium',
       clinicId: params.clinicId,

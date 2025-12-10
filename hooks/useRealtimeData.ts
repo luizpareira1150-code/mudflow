@@ -1,5 +1,5 @@
 
-import React, { useEffect, useState, useCallback, useRef } from 'react';
+import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { socketServer, SocketEvent } from '../lib/socketServer';
 import { appointmentService } from '../services/appointmentService';
 import { patientService } from '../services/patientService';
@@ -7,6 +7,17 @@ import { doctorService } from '../services/doctorService';
 
 /**
  * Hook genérico para dados em tempo real
+ * 
+ * @param fetchFunction - Função de busca de dados. 
+ * ⚠️ IMPORTANTE: Esta função DEVE ser memoizada com `useCallback` no componente pai se depender de props/state, 
+ * caso contrário, causará loops infinitos de re-renderização.
+ * 
+ * Exemplo correto:
+ * const fetcher = useCallback(() => service.get(id), [id]);
+ * useRealtimeData(fetcher, ...);
+ * 
+ * @param reloadOnEvents - Evento(s) do Socket que disparam atualização.
+ * @param dependencies - Array de dependências adicionais que forçam recarregamento.
  */
 export function useRealtimeData<T>(
   fetchFunction: () => Promise<T>,
@@ -26,13 +37,13 @@ export function useRealtimeData<T>(
   // Track mounted state to prevent setting state on unmounted component
   const isMounted = useRef(true);
 
-  // Use ref to hold the latest fetch function, preventing re-execution of loadData
-  // if the parent passes a new inline function on every render.
+  // Use ref to hold the latest fetch function.
+  // This allows us to call the freshest logic without forcing useEffects to re-run constantly.
   const fetchRef = useRef(fetchFunction);
 
   useEffect(() => {
     fetchRef.current = fetchFunction;
-  }, [fetchFunction]);
+  }); // Run on every render to ensure ref is always fresh
 
   // Handle unmount cleanup
   useEffect(() => {
@@ -42,13 +53,14 @@ export function useRealtimeData<T>(
     };
   }, []);
 
-  // Função de carregamento
+  // Função de carregamento memoizada pelas dependências de DADOS (não pela função em si)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   const loadData = useCallback(async (isSilent = false) => {
     try {
       if (!isSilent && isMounted.current) setLoading(true);
       if (isMounted.current) setError(null);
       
-      // Always call the latest version of the function
+      // Always call the latest version of the function via Ref
       const result = await fetchRef.current();
       
       if (isMounted.current) {
@@ -64,19 +76,21 @@ export function useRealtimeData<T>(
         setLoading(false);
       }
     }
-  }, dependencies); // Only re-create if explicit dependencies change
+  }, [...dependencies]); // Spread dependencies to ensure value equality checks
   
   // Carregar dados inicial
   useEffect(() => {
     loadData();
   }, [loadData]);
   
+  // Estabilizar a lista de eventos para evitar recriação de listeners se passado array inline
+  const eventsList = Array.isArray(reloadOnEvents) ? reloadOnEvents : [reloadOnEvents];
+  const eventsKey = eventsList.join(','); // Stable primitive key for dependency array
+
   // Escutar eventos WebSocket
   useEffect(() => {
-    const events = Array.isArray(reloadOnEvents) ? reloadOnEvents : [reloadOnEvents];
-    
     // Registrar listeners
-    const unsubscribers = events.map(event => 
+    const unsubscribers = eventsList.map(event => 
       socketServer.on(event, () => {
         loadData(true); // Silent refresh
       })
@@ -86,7 +100,8 @@ export function useRealtimeData<T>(
     return () => {
       unsubscribers.forEach(unsub => unsub());
     };
-  }, [reloadOnEvents, loadData]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [eventsKey, loadData]); // Depend on stable key instead of array reference
   
   return {
     data,

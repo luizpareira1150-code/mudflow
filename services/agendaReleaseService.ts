@@ -1,6 +1,6 @@
 
 import { AgendaReleaseSchedule, AgendaReleaseType, DayOfWeek } from '../types';
-import { createDateAtHour } from '../utils/dateUtils';
+import { createDateAtHour, getDayOfWeekBR, addDays } from '../utils/dateUtils';
 
 const RELEASE_SCHEDULE_KEY = 'medflow_agenda_release_schedule';
 
@@ -125,19 +125,23 @@ class AgendaReleaseService {
     
     const { dayOfWeek, hour } = schedule.weeklyConfig;
     
-    // Passo 1: Encontrar o "Início da Semana" da DATA ALVO (Domingo)
-    const targetWeekStart = new Date(target);
-    targetWeekStart.setDate(target.getDate() - target.getDay()); 
-    targetWeekStart.setHours(0,0,0,0);
+    // TIMEZONE FIX: Avoid target.getDay() which uses browser local time.
+    // Instead, convert target back to YYYY-MM-DD string and use the BR utility.
+    // This ensures that "00:00 BRT" on Sunday is treated as Sunday, even if it's Saturday night in California.
     
-    // Passo 2: Calcular a Data de Liberação para ESSA semana específica
-    const releaseDateForTarget = new Date(targetWeekStart);
-    releaseDateForTarget.setDate(targetWeekStart.getDate() + dayOfWeek);
+    const targetDateStr = target.toISOString().split('T')[0];
+    const targetDayIndex = getDayOfWeekBR(targetDateStr); // Returns 0 (Sun) to 6 (Sat) in BR Time
     
-    const [releaseHour, releaseMinute] = hour.split(':').map(Number);
-    releaseDateForTarget.setHours(releaseHour, releaseMinute, 0, 0);
+    // Calculate how many days to subtract to reach the previous Sunday (Start of Week)
+    const daysToSubtract = targetDayIndex; 
+    const weekStartStr = addDays(targetDateStr, -daysToSubtract);
     
-    // Passo 3: Comparar AGORA com a Data de Liberação
+    // Construct the specific Release Date for this week
+    // We add the configured release dayOfWeek (e.g., +1 for Monday) to the Sunday we found.
+    const releaseDateStr = addDays(weekStartStr, dayOfWeek);
+    const releaseDateForTarget = createDateAtHour(releaseDateStr, hour);
+    
+    // Compare
     if (now >= releaseDateForTarget) {
       return { released: true };
     } else {

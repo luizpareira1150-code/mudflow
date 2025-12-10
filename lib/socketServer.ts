@@ -1,5 +1,6 @@
 
 import { Appointment, Patient, Doctor, User, ClinicSettings, AgendaConfig } from '../types';
+import { monitoringService } from '../services/monitoring';
 
 /**
  * SERVIDOR WEBSOCKET SIMULADO
@@ -71,8 +72,12 @@ class MockSocketServer {
     
     // Escutar mensagens de outras tabs
     this.channel.onmessage = (event) => {
-      const message = event.data as SocketMessage;
-      this.handleIncomingMessage(message);
+      try {
+        const message = event.data as SocketMessage;
+        this.handleIncomingMessage(message);
+      } catch (error) {
+        console.error('Erro ao processar mensagem recebida do BroadcastChannel:', error);
+      }
     };
     
     console.log('🔌 [WebSocket Mock] Servidor iniciado');
@@ -80,6 +85,7 @@ class MockSocketServer {
   
   /**
    * Emitir evento com TIPO ESTRITO
+   * Protegido contra falhas para não interromper o fluxo principal.
    */
   emit<K extends keyof SocketPayloadMap>(
     event: K, 
@@ -87,19 +93,34 @@ class MockSocketServer {
     organizationId: string, 
     userId?: string
   ): void {
-    const message: SocketMessage<K> = {
-      event,
-      data,
-      organizationId,
-      timestamp: new Date().toISOString(),
-      userId
-    };
-    
-    // Enviar para todas as tabs abertas
-    this.channel.postMessage(message);
-    
-    // Acionar listeners locais
-    this.handleIncomingMessage(message);
+    try {
+      const message: SocketMessage<K> = {
+        event,
+        data,
+        organizationId,
+        timestamp: new Date().toISOString(),
+        userId
+      };
+      
+      // Enviar para todas as tabs abertas
+      // Pode falhar com DataCloneError se 'data' contiver funções ou referências circulares
+      this.channel.postMessage(message);
+      
+      // Acionar listeners locais
+      this.handleIncomingMessage(message);
+    } catch (error: any) {
+      // FALHA SILENCIOSA SEGURA:
+      // Se o socket falhar (erro de rede ou serialização), não queremos que 
+      // a criação do agendamento ou paciente falhe para o usuário.
+      // Apenas logamos para monitoramento.
+      console.error(`[Socket] Falha ao emitir evento ${event}:`, error);
+      
+      monitoringService.trackError(error, { 
+        context: 'WebSocket Emit Failed', 
+        event, 
+        organizationId 
+      });
+    }
   }
   
   /**
@@ -133,7 +154,8 @@ class MockSocketServer {
         try {
           callback(message.data);
         } catch (error) {
-          console.error('Erro ao processar evento WebSocket:', error);
+          console.error(`Erro no listener do evento ${message.event}:`, error);
+          // Não reportamos ao monitoringService aqui para evitar loops infinitos se o erro for no próprio sistema de log
         }
       });
     }

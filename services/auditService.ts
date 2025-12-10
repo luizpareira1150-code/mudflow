@@ -1,6 +1,7 @@
 
 import { AuditLog, AuditSource, User } from '../types';
 import { STORAGE_KEYS, getStorage, setStorage, initialLogs, delay } from './storage';
+import { createDateAtHour } from '../utils/dateUtils';
 
 // Helper to avoid circular dependency with authService
 const getCurrentUserFromStorage = (): User | null => {
@@ -36,15 +37,18 @@ export const systemLogService = {
         }
         
         // CRITICAL FIX: Date Parsing for Local Timezone Compatibility
+        // Replaced manual new Date() (Browser Local) with createDateAtHour (Brasilia Time -03:00)
+        // This logic is essential for Supabase migration later (generating correct ISO strings for queries)
+        
         if (filters.startDate) {
-            const [y, m, d] = filters.startDate.split('-').map(Number);
-            const start = new Date(y, m - 1, d, 0, 0, 0, 0); // Local Midnight
+            const start = createDateAtHour(filters.startDate, '00:00');
             filtered = filtered.filter(l => new Date(l.timestamp) >= start);
         }
         
         if (filters.endDate) {
-            const [y, m, d] = filters.endDate.split('-').map(Number);
-            const end = new Date(y, m - 1, d, 23, 59, 59, 999); // Local End of Day
+            // FIX: Construct absolute ISO string for end of day in Brasilia Time (-03:00)
+            // Avoids using .setSeconds() which operates on browser's local time
+            const end = new Date(`${filters.endDate}T23:59:59.999-03:00`);
             filtered = filtered.filter(l => new Date(l.timestamp) <= end);
         }
 

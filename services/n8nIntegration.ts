@@ -9,6 +9,7 @@ import { doctorAvailabilityService } from './doctorAvailabilityService';
 import { rateLimiterService } from './rateLimiterService';
 import { STORAGE_KEYS, getStorage, setStorage } from './storage';
 import { monitoringService } from './monitoring';
+import { systemLogService } from './auditService';
 import { z } from 'zod';
 
 // Crypto-safe Random ID Generator for Token
@@ -84,7 +85,7 @@ export interface N8NOutgoingPayload {
 class N8NIntegrationServiceClass {
   private queue: WebhookQueueItem[] = [];
   private readonly MAX_RETRIES = 5;
-  private readonly QUEUE_CHECK_INTERVAL = 30000; 
+  private readonly QUEUE_CHECK_INTERVAL = 10000; // Reduzido para 10s para maior responsividade
   private queueIntervalId: any = null;
   private isProcessing = false;
 
@@ -119,6 +120,9 @@ class N8NIntegrationServiceClass {
   }
 
   private addToQueue(url: string, payload: any, headers: any) {
+    // CRITICAL: Reload queue to ensure we append to the latest state from other tabs
+    this.loadQueue();
+
     const newItem: WebhookQueueItem = {
       id: crypto.randomUUID(), // Updated to secure ID
       url,
@@ -133,7 +137,7 @@ class N8NIntegrationServiceClass {
     this.saveQueue();
     monitoringService.trackMetric('webhook_queue_size', this.queue.length);
     
-    // Trigger processing immediately so we don't wait 30s for the first retry
+    // Trigger processing immediately so we don't wait for the next interval
     this.processQueue();
   }
 
@@ -144,53 +148,112 @@ class N8NIntegrationServiceClass {
   }
 
   private async processQueue() {
-    // Prevent concurrent execution to avoid double-sending
-    if (this.isProcessing || this.queue.length === 0) return;
-    this.isProcessing = true;
+    // 1. Prevent local re-entry overlap
+    if (this.isProcessing) return;
 
-    try {
-        const now = Date.now();
-        const pendingItems = this.queue.filter(item => item.nextRetry <= now && item.status !== 'FAILED');
+    // 2. Cross-Tab Locking using Web Locks API
+    // This ensures that only ONE tab across the entire browser processes the queue at a time.
+    // 'ifAvailable: true' means if lock is busy (another tab working), we just return and try next interval.
+    // This prevents duplication and race conditions cleanly.
+    
+    const lockManager = (navigator as any).locks;
 
-        for (const item of pendingItems) {
-          try {
-            const response = await fetch(item.url, {
-              method: 'POST',
-              headers: item.headers,
-              body: JSON.stringify(item.payload)
-            });
+    const runQueueLogic = async () => {
+        this.isProcessing = true;
+        try {
+            // 3. CRITICAL: Reload from storage to see items added by other tabs
+            this.loadQueue();
+            
+            const now = Date.now();
+            const pendingItems = this.queue.filter(item => item.nextRetry <= now && item.status !== 'FAILED');
 
-            if (!response.ok) {
-              throw new Error(`HTTP ${response.status}`);
-            }
+            if (pendingItems.length === 0) return;
 
-            // Success: Remove from queue
-            this.queue = this.queue.filter(q => q.id !== item.id);
-            this.saveQueue();
-            monitoringService.trackMetric('webhook_worker_success', 1, { url: item.url });
+            for (const item of pendingItems) {
+              try {
+                const response = await fetch(item.url, {
+                  method: 'POST',
+                  headers: item.headers,
+                  body: JSON.stringify(item.payload)
+                });
 
-          } catch (error) {
-            // Failure: Update retry count and backoff
-            monitoringService.trackError(error as Error, { source: 'WebhookWorker', itemId: item.id });
+                if (!response.ok) {
+                  throw new Error(`HTTP ${response.status}`);
+                }
 
-            const index = this.queue.findIndex(q => q.id === item.id);
-            if (index !== -1) {
-              const updatedItem = this.queue[index];
-              updatedItem.retryCount += 1;
-              
-              if (updatedItem.retryCount >= this.MAX_RETRIES) {
-                updatedItem.status = 'FAILED';
-                monitoringService.trackEvent('webhook_permanent_failure', { itemId: item.id, url: item.url });
-              } else {
-                updatedItem.nextRetry = Date.now() + this.calculateBackoff(updatedItem.retryCount);
+                // Success: Remove from queue
+                // We filter based on ID to be safe even if list changed slightly (though lock prevents concurrent writes)
+                this.queue = this.queue.filter(q => q.id !== item.id);
+                this.saveQueue();
+                monitoringService.trackMetric('webhook_worker_success', 1, { url: item.url });
+
+              } catch (error) {
+                // Failure: Update retry count and backoff
+                monitoringService.trackError(error as Error, { source: 'WebhookWorker', itemId: item.id });
+
+                const index = this.queue.findIndex(q => q.id === item.id);
+                if (index !== -1) {
+                  const updatedItem = this.queue[index];
+                  updatedItem.retryCount += 1;
+                  
+                  if (updatedItem.retryCount >= this.MAX_RETRIES) {
+                    // PERMANENT FAILURE
+                    updatedItem.status = 'FAILED';
+                    
+                    // 1. Remove from Active Queue immediately to save space (Storage Protection)
+                    // The audit log becomes the permanent record.
+                    this.queue.splice(index, 1);
+                    this.saveQueue();
+
+                    // 2. Persist to Audit Log for visibility
+                    // Using fire-and-forget logic to not block the loop, but catching errors
+                    const clinicId = updatedItem.payload?.data?.clinicId || 'unknown_org';
+                    
+                    systemLogService.createLog({
+                        organizationId: clinicId,
+                        action: AuditAction.WEBHOOK_FAILURE,
+                        entityType: 'Webhook',
+                        entityId: item.id,
+                        description: `Webhook failed after ${this.MAX_RETRIES} retries: ${item.url}`,
+                        metadata: {
+                            url: item.url,
+                            payload: item.payload,
+                            error: (error as Error).message
+                        },
+                        source: AuditSource.SYSTEM,
+                        userId: 'system',
+                        userName: 'Webhook Worker'
+                    }).catch(e => console.error("Failed to log webhook failure", e));
+
+                    monitoringService.trackEvent('webhook_permanent_failure', { itemId: item.id, url: item.url });
+                  } else {
+                    // RETRY
+                    updatedItem.nextRetry = Date.now() + this.calculateBackoff(updatedItem.retryCount);
+                    this.queue[index] = updatedItem;
+                    this.saveQueue();
+                  }
+                }
               }
-              this.queue[index] = updatedItem;
-              this.saveQueue();
             }
-          }
+        } catch (e) {
+            console.error('[WebhookWorker] Error processing queue', e);
+        } finally {
+            this.isProcessing = false;
         }
-    } finally {
-        this.isProcessing = false;
+    };
+
+    if (lockManager) {
+        // Request lock named 'medflow_webhook_worker'. 
+        // ifAvailable: true makes it non-blocking (returns null if locked).
+        await lockManager.request('medflow_webhook_worker', { ifAvailable: true }, async (lock: any) => {
+            if (lock) {
+                await runQueueLogic();
+            }
+            // else: another tab is processing, we skip this tick.
+        });
+    } else {
+        // Fallback for very old browsers (rare)
+        await runQueueLogic();
     }
   }
 
@@ -232,7 +295,6 @@ class N8NIntegrationServiceClass {
 
     } catch (error) {
         // High Reliability: On ANY failure, immediately persist to queue.
-        // We removed the in-memory while/setTimeout loop to prevent data loss if the browser is closed during the wait.
         console.warn('[N8N] Webhook failed, queuing for retry', error);
         monitoringService.trackMetric('webhook_outbound_failure_queued', 1, { event: payload.event });
         this.addToQueue(settings.n8nWebhookUrl, payload, headers);
@@ -250,19 +312,46 @@ class N8NIntegrationServiceClass {
     const clinicId = rawPayload.clinicId;
     if (!clinicId) throw new Error('Clinic ID missing in payload');
 
-    if (!rateLimiterService.checkLimit(clinicId)) {
+    // FIX: Await the async checkLimit (it now returns a Promise)
+    const isAllowed = await rateLimiterService.checkLimit(clinicId);
+    if (!isAllowed) {
         throw new Error('RATE_LIMIT_EXCEEDED: Muitas requisições em curto período.');
     }
 
     try {
         const expectedToken = validTokens.get(clinicId);
         
-        // SECURITY UPGRADE: Use timingSafeEqual instead of direct comparison
-        const receivedToken = rawPayload.authToken || '';
-        const isValidToken = expectedToken && timingSafeEqual(receivedToken, expectedToken);
+        // --- SECURITY ENHANCEMENT: Explicit Failure Logging ---
+        if (!expectedToken) {
+            await systemLogService.createLog({
+                organizationId: clinicId,
+                action: AuditAction.SECURITY_VIOLATION,
+                entityType: 'Webhook',
+                entityId: 'security_config',
+                description: `Webhook rejected: No valid token configured for clinic ${clinicId}`,
+                source: AuditSource.N8N_WEBHOOK,
+                userId: 'system',
+                userName: 'System Security'
+            });
+            throw new Error('SECURITY: Invalid clinic configuration - Token not found.');
+        }
 
-        if (!isValidToken) {
-          throw new Error('Acesso Negado: Token de autenticação inválido.');
+        const receivedToken = rawPayload.authToken || '';
+        // Use timingSafeEqual instead of direct comparison
+        if (!timingSafeEqual(receivedToken, expectedToken)) {
+             await systemLogService.createLog({
+                organizationId: clinicId,
+                action: AuditAction.SECURITY_VIOLATION,
+                entityType: 'Webhook',
+                entityId: 'security_auth',
+                description: `Webhook rejected: Invalid token received`,
+                // Safely log only first 8 chars of received token to aid debug without leaking full credential
+                metadata: { receivedTokenPrefix: receivedToken.substring(0, 8) + '...' },
+                source: AuditSource.N8N_WEBHOOK,
+                userId: 'system',
+                userName: 'System Security'
+            });
+            throw new Error('Acesso Negado: Token de autenticação inválido.');
         }
 
         // --- VALIDAÇÃO ESTRITA (TYPE SAFE) ---
@@ -394,7 +483,7 @@ class N8NIntegrationServiceClass {
                 targetRole: [UserRole.SECRETARY],
                 metadata: { 
                     appointmentId: data.appointmentId, 
-                    patientPhone: data.patientPhone,
+                    patientPhone: data.patientPhone, 
                     triggerPopup: true 
                 }
             });

@@ -16,14 +16,17 @@ interface ErrorBoundaryState {
 }
 
 export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoundaryState> {
-  state: ErrorBoundaryState = {
+  public state: ErrorBoundaryState = {
     hasError: false,
     error: null,
     errorInfo: null,
     isDetailsOpen: false,
     copied: false,
     // GOVERNANCE: Use crypto.randomUUID() for error tracking ID
-    errorId: crypto.randomUUID().slice(0, 8).toUpperCase()
+    // Fallback for environments where crypto.randomUUID is not available (though it should be in modern browsers)
+    errorId: (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') 
+      ? crypto.randomUUID().slice(0, 8).toUpperCase() 
+      : Math.random().toString(36).substring(2, 10).toUpperCase()
   };
 
   static getDerivedStateFromError(error: Error): Partial<ErrorBoundaryState> {
@@ -33,7 +36,9 @@ export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoun
       errorInfo: null,
       isDetailsOpen: false,
       copied: false,
-      errorId: crypto.randomUUID().slice(0, 8).toUpperCase()
+      errorId: (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function')
+        ? crypto.randomUUID().slice(0, 8).toUpperCase() 
+        : Math.random().toString(36).substring(2, 10).toUpperCase()
     };
   }
 

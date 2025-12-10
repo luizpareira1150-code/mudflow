@@ -12,18 +12,44 @@ export const authService = {
       
       if (user) {
           // STRICT SECURITY: Delegate all verification to passwordService.
-          // Removed legacy 'PLAIN:' text check to prevent injection vulnerabilities.
           const isValid = await passwordService.verifyPassword(pass, user.passwordHash);
 
           if (isValid) {
-              // Migration Strategy: If valid but using old format (Legacy Bcrypt or Seed Token), upgrade to WebCrypto
+              // Migration Strategy: Upgrade to WebCrypto if needed
               if (passwordService.needsMigration(user.passwordHash)) {
                  try {
-                     user.passwordHash = await passwordService.hashPassword(pass);
+                     const newHash = await passwordService.hashPassword(pass);
+                     user.passwordHash = newHash;
                      setStorage(STORAGE_KEYS.USERS, users);
+                     
+                     // ✅ AUDIT: Log successful migration
+                     await systemLogService.createLog({
+                         organizationId: user.clinicId,
+                         action: AuditAction.PASSWORD_MIGRATION,
+                         entityType: 'User',
+                         entityId: user.id,
+                         entityName: user.name,
+                         description: 'Senha migrada para WebCrypto (PBKDF2/SHA-256)',
+                         source: AuditSource.SYSTEM,
+                         userId: user.id,
+                         userName: user.name
+                     });
                      console.log(`[AUTH] Migrated password for ${user.username} to WebCrypto`);
-                 } catch (e) {
-                     console.error('[AUTH] Failed to migrate password', e);
+                 } catch (e: any) {
+                     // 🚨 CRITICAL FAIL-SAFE: Prevent login if migration fails (Data Integrity)
+                     console.error('[AUTH] Critical: Password migration failed', e);
+                     
+                     await systemLogService.createLog({
+                         organizationId: user.clinicId,
+                         action: AuditAction.SYSTEM_ERROR,
+                         entityType: 'User',
+                         entityId: user.id,
+                         description: `CRITICAL: Password migration failed - ${e.message}`,
+                         metadata: { error: e.stack },
+                         source: AuditSource.SYSTEM
+                     });
+                     
+                     throw new Error('SECURITY: Falha ao atualizar criptografia da senha. Contate o suporte.');
                  }
               }
 
