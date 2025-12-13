@@ -17,7 +17,8 @@
     "@vitejs/plugin-react": "^5.1.1",
     "url": "^0.11.4",
     "path": "^0.12.7",
-    "zod": "^3.22.4"
+    "zod": "^3.22.4",
+    "@supabase/supabase-js": "2.39.7"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",
